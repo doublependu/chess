@@ -1,0 +1,10 @@
+{
+  "name": "Sky Arena Chess",
+  "short_name": "Sky Chess",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#1b1530",
+  "theme_color": "#1b1530",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

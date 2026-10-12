@@ -1,0 +1,34 @@
+{
+  "name": "chess",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "node scripts/check-clean.mjs && vite build && wrangler deploy",
+    "cf:dev": "vite build && wrangler dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "perf:size": "node scripts/perf-size.mjs",
+    "perf:load": "node scripts/perf-load.mjs",
+    "perf:fps": "node scripts/perf-fps.mjs",
+    "playtest": "node playtest/play-ui.mjs",
+    "playtest:balance": "node playtest/sim-balance.mjs"
+  },
+  "dependencies": {
+    "@dgreenheck/three-pinata": "^2.0.1",
+    "@dimforge/rapier3d": "^0.21.0",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "vite": "^8.3.4",
+    "vite-plugin-wasm": "^3.6.0",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.149.0"
+  }
+}

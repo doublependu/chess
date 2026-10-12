@@ -147,3 +147,10 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Project
+.wrangler/
+playtest-output/
+test-results/
+playwright-report/
+.playwright-mcp/
