@@ -5,8 +5,8 @@ import { CameraRig } from './camera.js';
 import { BoardView } from './board.js';
 import { Environment } from './environment/index.js';
 import { PieceFactory, PieceView, PICK_LAYER } from './pieces/pieceView.js';
-import { globalUniforms, createPieceMaterial, createInnerMaterial } from './materials.js';
-import { Governor, TIERS } from './quality.js';
+import { globalUniforms, outlineUniforms, createPieceMaterial, createInnerMaterial } from './materials.js';
+import { Governor, TIERS, idleMotion } from './quality.js';
 import { xzToSquare } from './coords.js';
 import { Animator } from '../anim/timeline.js';
 import { pixelScale, Burst, Shockwave, Streaks } from './fx/particles.js';
@@ -145,6 +145,7 @@ export class Stage {
     this.lastRender = 0;
     this.running = false;
     this.frozen = false; // idle animation stopped (rewind "time stop")
+    this.clock = null; // tests: every frame at this time (debug/testHooks.js)
     this.selected = null;
     this.checkSquare = null;
     this.sideToMove = 0;
@@ -282,6 +283,9 @@ export class Stage {
     if (this.width) this.renderer.setSize(this.width, this.height, false);
     if (this.post && this.width) this.post.setSize(this.width, this.height, pr);
     pixelScale.value = (this.height || 800) * pr * 0.9;
+    // MSAA smooths a thin outline; without it the outline needs a pixel and a half to stay unbroken.
+    outlineUniforms.uMinPx.value = this.renderer.getContextAttributes()?.antialias ? 1 : 1.5;
+    outlineUniforms.uWorldPerPx.value = (2 * Math.tan((this.rig.camera.fov * Math.PI) / 360)) / ((this.height || 800) * pr);
   }
 
   start() {
@@ -323,7 +327,7 @@ export class Stage {
   }
 
   update(dt) {
-    this.time += dt;
+    this.time = this.clock ?? this.time + dt;
     globalUniforms.uTime.value = this.time;
     this.animator.update(dt);
     // Wind: the strongest active gust plus a gentle breeze.
@@ -337,18 +341,18 @@ export class Stage {
   }
 
   updateIdle(dt) {
-    const reduced = this.settings.reducedMotion;
+    const m = IDLE[idleMotion(this.settings.idleMotion, { coarse: this.info.coarse, tier: this.tierName, reducedMotion: this.settings.reducedMotion })];
     const k = 1 - Math.exp(-dt * 10);
     for (const v of this.views.views) {
       if (!v.root.visible) continue;
-      const amp = this.frozen ? 0 : (reduced ? 0.35 : 1) * (v.color === this.sideToMove ? 1.25 : 0.85);
+      const amp = this.frozen ? 0 : v.color === this.sideToMove ? m.move : m.wait;
       const t = this.time * (this.frozen ? 0 : 1) + v.phase;
-      const breathe = 1 + Math.sin(t * 2.1) * 0.02 * amp;
+      const breathe = 1 + Math.sin(t * 2.1) * m.breathe * amp;
       const lift = v === this.selected ? 0.22 + Math.sin(this.time * 4.2) * 0.03 : 0;
       v.lift = (v.lift || 0) + (lift - (v.lift || 0)) * k;
       v.idleG.scale.set(1 / Math.sqrt(breathe), breathe, 1 / Math.sqrt(breathe));
-      v.idleG.position.y = (Math.sin(t * 1.3) * 0.5 + 0.5) * 0.025 * amp + v.lift;
-      v.idleG.rotation.y = v.type === 2 ? Math.sin(t * 0.6) * 0.28 * amp : Math.sin(t * 0.4) * 0.05 * amp;
+      v.idleG.position.y = (Math.sin(t * m.rate) * 0.5 + 0.5) * m.bob * amp + v.lift;
+      v.idleG.rotation.y = (v.type === 2 ? Math.sin(t * 0.6) * m.knight : Math.sin(t * 0.4) * m.sway) * amp;
       const inCheck = this.checkSquare && v.square === this.checkSquare && v.type === 6 && v.alive;
       v.idleG.rotation.z = inCheck && !this.frozen ? Math.sin(this.time * 38) * 0.035 : 0;
       if (!v.inClip) {
@@ -399,6 +403,14 @@ export class Stage {
     return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
   }
 }
+
+// Idle motion (`idleMotion` in quality.js). `move`/`wait`: how much the side to move and the other side do it.
+// Calm: only the side to move bobs, slowly and at half height, with no breathing and a small turn of the knight.
+const IDLE = {
+  full: { move: 1.25, wait: 0.85, breathe: 0.02, bob: 0.025, rate: 1.3, sway: 0.05, knight: 0.28 },
+  calm: { move: 1, wait: 0, breathe: 0, bob: 0.0125, rate: 0.9, sway: 0, knight: 0.08 },
+  off: { move: 0, wait: 0, breathe: 0, bob: 0, rate: 0, sway: 0, knight: 0 },
+};
 
 const CHECK_RED = new Color('#ff3b30');
 const SELECT_GOLD = new Color('#ffcf6b');

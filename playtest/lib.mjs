@@ -28,13 +28,14 @@ export function parseArgs(defaults) {
 export async function startServer({ url, build = true, port = 4173 } = {}) {
   if (url) return { url, stop: () => {} };
   if (build) execSync('npx vite build', { stdio: 'inherit' });
-  const proc = spawn('npx', ['vite', 'preview', '--port', String(port), '--strictPort'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  // In a process group of its own: `npx` starts vite as a child, and stopping only `npx` would leave vite serving.
+  const proc = spawn('npx', ['vite', 'preview', '--port', String(port), '--strictPort'], { stdio: ['ignore', 'ignore', 'ignore'], detached: true });
   const base = `http://localhost:${port}/`;
   for (let i = 0; i < 100; i++) {
     try { const r = await fetch(base); if (r.ok) break; } catch { /* not yet */ }
     await new Promise((r) => setTimeout(r, 150));
   }
-  return { url: base, stop: () => proc.kill() };
+  return { url: base, stop: () => { try { process.kill(-proc.pid, 'SIGTERM'); } catch { /* gone already */ } } };
 }
 
 export async function launch({ headed = false } = {}) {

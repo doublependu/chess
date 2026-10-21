@@ -42,7 +42,14 @@ npm run playtest             # drives the real build in Chromium like a human (t
 npm run perf:size            # critical-path bundle budget (250 KB gzip)
 npm run perf:load            # time-to-interactive under throttled network/CPU
 npm run perf:fps -- --headed # frame/GPU time per graphics tier (needs a real GPU)
+npm run playtest:room        # two players and a watcher in a p3p2 room (needs ../p3p2, or --server URL)
 ```
+
+## Playing with a friend
+
+👥 opens the [p3p2](https://p3p2.me/#start) room window: paste a room URL from a p3p2 server's portal and send the invite.
+For testing on one machine use two browsers or a private window (two tabs of one browser are one player).
+`npm run playtest:room -- --lag` runs the room test through p3p2's lag proxy.
 
 Playtest output (videos, traces, reports, PGNs) goes to `playtest-output/`, which is git-ignored. The first browser run may need `npx playwright install chromium`.
 

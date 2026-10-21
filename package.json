@@ -17,11 +17,13 @@
     "perf:load": "node scripts/perf-load.mjs",
     "perf:fps": "node scripts/perf-fps.mjs",
     "playtest": "node playtest/play-ui.mjs",
-    "playtest:balance": "node playtest/sim-balance.mjs"
+    "playtest:balance": "node playtest/sim-balance.mjs",
+    "playtest:room": "node playtest/play-room.mjs"
   },
   "dependencies": {
     "@dgreenheck/three-pinata": "^2.0.1",
     "@dimforge/rapier3d": "^0.21.0",
+    "@p3p2/client": "^0.1.1",
     "three": "^0.186.1"
   },
   "devDependencies": {

@@ -4,6 +4,11 @@ const GLYPH = [
   ['', '♟', '♞', '♝', '♜', '♛', '♚'],
 ];
 export const GITHUB_URL = 'https://github.com/doublependu/chess';
+export const MAIZE_URL = 'https://maize.live';
+/** How to make a room for playing with friends. */
+export const P3P2_URL = 'https://p3p2.me/#start';
+
+const link = (href, text) => h('a', { href, target: '_blank', rel: 'noopener' }, text);
 
 /** Tiny hyperscript helper. */
 export function h(tag, props = {}, ...children) {
@@ -35,7 +40,7 @@ export class UI {
     this.handlers = {};
     // The loading screen is removed after boot, so keep a copy of its GitHub corner.
     this.cornerTemplate = document.querySelector('#loading .github-corner')?.cloneNode(true) || null;
-    for (const [id, action] of [['btn-menu', 'pause'], ['btn-save', 'save'], ['btn-load', 'load'], ['btn-view', 'resetView']]) {
+    for (const [id, action] of [['btn-menu', 'pause'], ['btn-save', 'save'], ['btn-load', 'load'], ['btn-view', 'resetView'], ['btn-people', 'people']]) {
       $(id).addEventListener('click', () => { this.audio?.click(); this.emit(action); });
     }
     const san = $('san-input');
@@ -103,6 +108,14 @@ export class UI {
     return h('button', { class: 'btn ' + cls, onclick: () => { this.audio?.click(); onClick(); }, ...attrs }, label);
   }
 
+  /** "Play with a friend", and right under it where to get a room for it. */
+  friendButton() {
+    return [
+      this.btn('👥 Play with a friend', () => this.emit('people')),
+      h('p', { class: 'hint' }, 'Need a room? Make one free at ', link(P3P2_URL, 'p3p2.me ↗')),
+    ];
+  }
+
   showTitle({ hasAutosave, hasSlots, rating }) {
     this.closeAll();
     const panel = h('div', { class: 'panel' },
@@ -115,6 +128,7 @@ export class UI {
           this.btn('♚ Play Black', () => this.emit('newGame', 1)),
         ),
         this.btn('🎲 Random side', () => this.emit('newGame', 'random')),
+        ...this.friendButton(),
         this.btn('⏪ Load checkpoint', () => this.emit('load'), '', { disabled: !hasSlots }),
         this.btn('⚙ Settings', () => this.emit('settings')),
       ),
@@ -136,12 +150,12 @@ export class UI {
           this.btn('⏪ Load', () => this.emit('load')),
         ),
         this.btn('♻ New game', () => this.emit('newGameMenu')),
+        ...this.friendButton(),
         this.btn('🏳 Resign', () => this.emit('resign'), 'danger', { disabled: !canResign }),
         this.btn('⚙ Settings', () => this.emit('settings')),
       ),
-      h('p', { class: 'fineprint' },
-        h('a', { href: GITHUB_URL, target: '_blank', rel: 'noopener' }, 'Fork me on GitHub'), ' · ',
-        'Keys: ', h('span', { class: 'kbd' }, 'Esc'), ' pause, ', h('span', { class: 'kbd' }, '/'), ' type a move'),
+      h('p', { class: 'fineprint' }, link(GITHUB_URL, 'Fork me on GitHub'), ' · ', link(MAIZE_URL, 'More games on Maize.Live')),
+      h('p', { class: 'fineprint' }, 'Keys: ', h('span', { class: 'kbd' }, 'Esc'), ' pause, ', h('span', { class: 'kbd' }, '/'), ' type a move'),
     );
     this.show('pause', panel, { corner: true, dismiss: () => this.emit('resume') });
   }
@@ -190,6 +204,8 @@ export class UI {
         this.seg([[1, 'Cinematic'], [1.8, 'Fast'], [4, 'Instant']], settings.animSpeed, set('animSpeed'))),
       h('div', { class: 'setting' }, h('label', { class: 'h' }, 'Sound'),
         this.seg([[true, 'On'], [false, 'Off']], settings.sound, set('sound'))),
+      h('div', { class: 'setting' }, h('label', { class: 'h' }, `Idle animation (auto picked: ${info.idleAuto})`),
+        this.seg([['auto', 'Auto'], ['full', 'Full'], ['calm', 'Calm'], ['off', 'Off']], settings.idleMotion, set('idleMotion'))),
       h('div', { class: 'setting' }, h('label', { class: 'h' }, 'Reduce motion (no camera shake)'),
         this.seg([[false, 'Off'], [true, 'On']], settings.reducedMotion, set('reducedMotion'))),
       h('div', { class: 'setting' }, h('label', { class: 'h' }, 'Show legal moves'),
@@ -274,8 +290,53 @@ export class UI {
     this.show('over', panel, { corner: true });
   }
 
+  /** The game is over in a room: no rating, no checkpoints; the next game, with colours changed, for a player. */
+  showRoomGameOver({ title, reason, glyph, win, onRematch }) {
+    this.close('over');
+    const panel = h('div', { class: 'panel', style: 'text-align:center' },
+      h('div', { class: 'result-big' }, glyph),
+      h('h2', {}, title),
+      h('p', { class: 'lead' }, reason),
+      h('div', { class: 'menu' },
+        onRematch ? this.btn(win ? 'Play again' : 'Rematch', () => { this.close('over'); onRematch(); }, 'primary') : null,
+        this.btn('👁 View board', () => this.close('over'), onRematch ? '' : 'primary'),
+      ),
+      onRematch ? h('p', { class: 'fineprint' }, 'The next game starts when one of you asks; you change colours.') : null,
+    );
+    this.show('over', panel, { corner: true });
+  }
+
+  /** The menu in a room, where Esc and ☰ lead. */
+  showRoomMenu({ seated, canOffer, canAccept, canResign, canNew, canSit, onOffer, onAccept, onResign, onNew, onStand, onSit }) {
+    this.close('pause');
+    const act = (fn) => () => { this.close('pause'); fn(); };
+    const panel = h('div', { class: 'panel' },
+      h('h2', {}, 'Playing with friends'),
+      h('p', { class: 'lead' }, seated ? 'The room keeps the game: close the page, and pick it up when you like.' : 'You are watching. The players are on the name plates.'),
+      h('div', { class: 'menu' },
+        this.btn('▶ Back to the board', () => this.emit('resume'), 'primary'),
+        canSit ? this.btn('🪑 Take the free seat', act(onSit)) : null,
+        canOffer ? this.btn('🤝 Offer a draw', act(onOffer)) : null,
+        canAccept ? this.btn('🤝 Accept the draw', act(onAccept)) : null,
+        canNew ? this.btn('♻ Next game', act(onNew)) : null,
+        canResign ? this.btn('🏳 Resign', act(onResign), 'danger') : null,
+        seated ? this.btn('🚪 Give up my seat', act(onStand)) : null,
+        this.btn('⚙ Settings', () => this.emit('settings')),
+      ),
+      h('p', { class: 'fineprint' }, 'The 👥 button, bottom right, is the room: who is here, the invite, chat, and leaving.'),
+      h('p', { class: 'fineprint' }, link(P3P2_URL, 'How rooms work: p3p2.me'), ' · ', link(MAIZE_URL, 'More games on Maize.Live')),
+    );
+    this.show('pause', panel, { corner: true, dismiss: () => this.emit('resume') });
+  }
+
   // ---------- HUD ----------
   showHud(v) { this.hud.hidden = !v; }
+
+  /** The names on the two plates: this page's side below, the other above. */
+  setNames(you, them) {
+    $('p-you').querySelector('.name').textContent = you;
+    $('p-ai').querySelector('.name').textContent = them;
+  }
 
   setSides(humanColor) {
     $('p-you').querySelector('.swatch').className = 'swatch ' + (humanColor === 0 ? 'w' : 'b');
@@ -301,6 +362,9 @@ export class UI {
   }
 
   setSaveEnabled(v) { $('btn-save').disabled = !v; $('btn-save').style.opacity = v ? 1 : 0.4; }
+
+  /** In a room there are no checkpoints: their two buttons go. */
+  setRoomMode(on) { $('hud-actions-top').hidden = on; }
 
   toast(text, ms = 2600) {
     const el = h('div', {}, text);

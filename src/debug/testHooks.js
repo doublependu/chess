@@ -19,6 +19,9 @@ export function installTestHooks({ stage, ctrl, ui, info, settings }) {
     lastDestruction: () => stage.lastDestruction || null,
     renderInfo: () => ({ ...stage.renderer.info.render, ...stage.renderer.info.memory, programs: stage.renderer.info.programs?.length }),
     setTier: (t) => stage.setTier(t),
+    // Every frame drawn at time `t` (null: the clock runs again), for screenshots that hold still.
+    holdClock: (t) => { stage.clock = t; stage.requestRender(); },
+    outlineStats: async (opts) => (await import('./outlineProbe.js')).outlineStats(stage, opts),
     slowFrames: () => (stage.slowLog ||= []),
     // GPU time (ms) of one full render, via EXT_disjoint_timer_query_webgl2 when available.
     gpuTime: async (samples = 20) => {

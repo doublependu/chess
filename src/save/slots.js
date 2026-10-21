@@ -22,7 +22,7 @@ export const store = {
 
 export const DEFAULT_SETTINGS = {
   graphics: 'auto', difficulty: 'auto', animSpeed: 1, sound: true, volume: 0.7,
-  reducedMotion: null, showMoves: true, showSanInput: false,
+  reducedMotion: null, idleMotion: 'auto', showMoves: true, showSanInput: false,
 };
 
 export function loadSettings() {

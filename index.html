@@ -138,6 +138,7 @@ a { color: var(--gold); }
 .slot .meta { font-size: 13px; color: var(--muted); } .slot .label { font-weight: 650; }
 .slot[disabled] { opacity: .45; }
 .fineprint { margin-top: 14px; font-size: 12px; color: var(--muted); text-align: center; }
+.menu .hint { margin: -6px 0 2px; font-size: 12px; color: var(--muted); text-align: center; }
 .result-big { font-size: 40px; margin: 6px 0; }
 #toast { position: absolute; left: 50%; bottom: calc(90px + var(--safe-b)); transform: translateX(-50%); z-index: 80;
   display: grid; gap: 6px; pointer-events: none; width: min(92vw, 420px); }
@@ -162,6 +163,7 @@ a { color: var(--gold); }
     <div class="player" id="p-ai"><span class="swatch b"></span><div class="col"><span class="name">AI</span><span class="sub" id="ai-status">Adaptive</span></div><div class="caps" id="caps-ai"></div></div>
     <div class="player" id="p-you"><span class="swatch w"></span><div class="col"><span class="name">You</span><span class="sub" id="you-status">Your move</span></div><div class="caps" id="caps-you"></div></div>
     <div id="hud-actions">
+      <button id="btn-people" class="icon-btn" aria-label="Play with friends" title="Play with friends">👥</button>
       <button id="btn-view" class="icon-btn" aria-label="Reset view" title="Reset view">⌖</button>
     </div>
     <div id="banner">Check</div>
@@ -178,7 +180,7 @@ a { color: var(--gold); }
       <p class="subtitle">Pieces shatter. Time rewinds. The AI learns your level.</p>
       <div class="bar"><i id="load-bar"></i></div>
       <div id="load-status">Loading…</div>
-      <p class="fineprint"><a href="https://github.com/doublependu/chess" target="_blank" rel="noopener">Fork me on GitHub</a> · GPL-3.0</p>
+      <p class="fineprint"><a href="https://github.com/doublependu/chess" target="_blank" rel="noopener">Fork me on GitHub</a> · GPL-3.0 · <a href="https://maize.live" target="_blank" rel="noopener">More games on Maize.Live</a></p>
     </div>
   </div>
 </div>

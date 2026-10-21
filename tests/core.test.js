@@ -169,4 +169,14 @@ describe('game rules', () => {
     expect(() => g.play('e2e5')).toThrow();
     expect(() => g.play('xx')).toThrow();
   });
+  it('a draw by agreement ends the game, and undoing a move takes it back', () => {
+    const g = Game.fromMoves(['e2e4', 'e7e5']);
+    g.agree();
+    expect(g.result).toEqual({ status: RESULT.AGREED, winner: null });
+    expect(g.over).toBe(true);
+    g.updateResult();
+    expect(g.result.status).toBe(RESULT.AGREED);
+    g.undo();
+    expect(g.result.status).toBe(RESULT.PLAYING);
+  });
 });

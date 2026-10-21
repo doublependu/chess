@@ -21,6 +21,7 @@ export const RESULT = {
   FIFTY: 'fifty-move rule',
   INSUFFICIENT: 'insufficient material',
   RESIGN: 'resignation',
+  AGREED: 'agreement',
 };
 
 /**
@@ -35,6 +36,7 @@ export class Game {
     this.records = [];
     this.result = { status: RESULT.PLAYING, winner: null };
     this.resigned = null;
+    this.agreed = false;
   }
 
   static fromMoves(uciList, opts = {}) {
@@ -131,6 +133,7 @@ export class Game {
   undo() {
     if (!this.records.length) return null;
     if (this.resigned !== null) this.resigned = null;
+    this.agreed = false;
     const rec = this.records.pop();
     this.pos.unmakeMove();
     this.updateResult();
@@ -142,9 +145,19 @@ export class Game {
     this.result = { status: RESULT.RESIGN, winner: color ^ 1 };
   }
 
+  /** A draw both players agreed to (only between two people: the AI never offers one). */
+  agree() {
+    this.agreed = true;
+    this.result = { status: RESULT.AGREED, winner: null };
+  }
+
   updateResult() {
     if (this.resigned !== null) {
       this.result = { status: RESULT.RESIGN, winner: this.resigned ^ 1 };
+      return;
+    }
+    if (this.agreed) {
+      this.result = { status: RESULT.AGREED, winner: null };
       return;
     }
     const pos = this.pos;

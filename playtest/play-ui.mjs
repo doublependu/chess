@@ -5,6 +5,7 @@
 //   npm run playtest                        # all scenarios, default personas
 //   node playtest/play-ui.mjs --scenarios game,checkpoint --personas club --max-moves 30
 //   node playtest/play-ui.mjs --url http://localhost:5173/ --no-build --headed
+//   node playtest/play-ui.mjs --scenarios outline --no-video   # outline coverage/flicker on phone and desktop
 import { writeFileSync, mkdirSync } from 'node:fs';
 import {
   parseArgs, outDir, startServer, launch, MOBILE, watchErrors, openGame, idle, state, playMove, tapSquare, fenBoard,
@@ -13,7 +14,7 @@ import { PERSONAS, PersonaPlayer } from './personas.js';
 import { mulberry32 } from '../src/ai/strength.js';
 
 const args = parseArgs({
-  scenarios: 'game,checkpoint,rotate,promotion,pause,contextloss', personas: 'beginner,club', 'max-moves': 40,
+  scenarios: 'game,checkpoint,rotate,promotion,pause,contextloss,outline', personas: 'beginner,club', 'max-moves': 40,
   speed: 1.8, video: true, headed: false, build: true, url: null, seed: 7,
 });
 const DIR = outDir('ui');
@@ -25,7 +26,7 @@ async function newPage(browser, device, name) {
   const dev = MOBILE[device];
   const ctx = await browser.newContext({
     ...dev,
-    recordVideo: args.video ? { dir: `${DIR}/video/${name}`, size: dev.viewport } : undefined,
+    recordVideo: args.video && !args['no-video'] ? { dir: `${DIR}/video/${name}`, size: dev.viewport } : undefined,
   });
   const page = await ctx.newPage();
   const errors = [];
@@ -207,6 +208,10 @@ async function scenarioPause(browser, url) {
   const corner = await page.locator('.overlay[data-name="pause"] .github-corner svg').count();
   const href = await page.locator('.overlay[data-name="pause"] .github-corner').getAttribute('href');
   const version = await page.locator('#version').textContent();
+  const maize = await page.locator('.overlay[data-name="pause"] a[href="https://maize.live"]').count();
+  const p3p2 = await page.locator('.overlay[data-name="pause"] .hint a[href="https://p3p2.me/#start"]').count();
+  const loadingHtml = await (await fetch(url)).text();
+  const loadingMaize = /<div id="loading">[\s\S]*<a href="https:\/\/maize\.live"[^>]*>More games on Maize\.Live<\/a>/.test(loadingHtml);
   await page.getByRole('button', { name: /Resume/ }).click();
   await page.waitForTimeout(300);
   const after = await page.evaluate(() => window.__test.overlay());
@@ -217,6 +222,9 @@ async function scenarioPause(browser, url) {
     { check: 'pause screen has the fork-me corner', ok: corner === 1 && /github\.com\/doublependu\/chess/.test(href || '') },
     { check: 'version badge "v.xxxx"', ok: /^v\.[0-9a-f]{4}$/.test((version || '').trim()), version },
     { check: 'resume closes pause', ok: after === null },
+    { check: 'loading screen links to Maize.Live', ok: loadingMaize },
+    { check: 'pause screen links to Maize.Live', ok: maize === 1 },
+    { check: 'pause screen says where to make a room (p3p2.me)', ok: p3p2 === 1 },
   ];
   return { name: 'pause', checks, errors, ok: checks.every((c) => c.ok) };
 }
@@ -239,6 +247,48 @@ async function scenarioContextLoss(browser, url) {
   return { name: 'contextloss', checks, issues, errors, ok: checks.every((c) => c.ok) && !issues.length };
 }
 
+// How well the piece outlines read on a phone (Low and Medium) and on a desktop, with the pieces at rest
+// (see src/debug/outlineProbe.js). Screenshots of both back ranks go to outline/.
+async function scenarioOutline(browser, url) {
+  const runs = [
+    { device: 'pixel5', quality: 'low', scales: [1, 0.6] },
+    { device: 'pixel5', quality: 'medium', scales: [1] },
+    { device: 'desktop', quality: 'medium', scales: [1] },
+  ];
+  const checks = [], results = [], errors = [];
+  mkdirSync(`${DIR}/outline`, { recursive: true });
+  for (const run of runs) {
+    const name = `outline-${run.device}-${run.quality}`;
+    const { ctx, page, errors: errs } = await newPage(browser, run.device, name);
+    const u = new URL(url);
+    u.searchParams.set('quality', run.quality);
+    await openGame(page, u.toString(), { settings: SETTINGS(2) });
+    const start = page.getByRole('button', { name: /Play White/ });
+    if (MOBILE[run.device].hasTouch) await start.tap(); else await start.click();
+    await idle(page);
+    for (const scale of run.scales) {
+      const stats = await page.evaluate((scale) => window.__test.outlineStats({ scale }), scale);
+      results.push({ ...run, scale, ...stats });
+      const phone = run.device !== 'desktop';
+      checks.push({
+        check: `${run.device} ${run.quality} ×${scale}, idle ${stats.idle}: outline unbroken (min coverage ${stats.minCoverage}, width ${stats.width} px, flicker ${stats.flicker})`,
+        ok: !phone || stats.minCoverage >= 0.9,
+      });
+    }
+    await page.evaluate(() => window.__test.holdClock(10));
+    await page.waitForTimeout(150);
+    for (const [rank, label] of [['8', 'black'], ['1', 'white']]) {
+      const pts = await page.evaluate((r) => ['a', 'h'].map((f) => window.__test.squareToScreen(f + r, 0.6)), rank);
+      const x = Math.max(0, Math.min(pts[0].x, pts[1].x) - 30), y = Math.max(0, Math.min(pts[0].y, pts[1].y) - 70);
+      await page.screenshot({ path: `${DIR}/outline/${name}-${label}.png`, clip: { x, y, width: Math.abs(pts[1].x - pts[0].x) + 60, height: 110 } });
+    }
+    await page.evaluate(() => window.__test.holdClock(null));
+    errors.push(...errs);
+    await ctx.close();
+  }
+  return { name: 'outline', checks, results, errors, ok: checks.every((c) => c.ok) };
+}
+
 const server = await startServer({ url: args.url, build: args.build !== false && !args['no-build'] });
 const browser = await launch({ headed: args.headed });
 const scenarios = String(args.scenarios).split(',');
@@ -257,7 +307,7 @@ try {
         }
         continue;
       }
-      const fn = { checkpoint: scenarioCheckpoint, rotate: scenarioRotate, promotion: scenarioPromotion, pause: scenarioPause, contextloss: scenarioContextLoss }[sc];
+      const fn = { checkpoint: scenarioCheckpoint, rotate: scenarioRotate, promotion: scenarioPromotion, pause: scenarioPause, contextloss: scenarioContextLoss, outline: scenarioOutline }[sc];
       if (!fn) { console.warn('unknown scenario', sc); continue; }
       res = await fn(browser, server.url);
     } catch (e) {

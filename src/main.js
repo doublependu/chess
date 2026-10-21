@@ -1,5 +1,5 @@
 // Boot order: probe device → renderer + scene → UI → first frame (time to interactive) → deferred work.
-import { probeDevice, chooseTier, stepTier, TIERS } from './render/quality.js';
+import { probeDevice, chooseTier, stepTier, idleMotion, TIERS } from './render/quality.js';
 import { Stage } from './render/stage.js';
 import { DestructionManager } from './destruction/manager.js';
 import { AIClient } from './ai/client.js';
@@ -9,6 +9,7 @@ import { Controller } from './game/controller.js';
 import { attachInput } from './game/input.js';
 import { loadSettings, saveSettings, loadAutosave, loadSlots } from './save/slots.js';
 import { installTestHooks } from './debug/testHooks.js';
+import { openCompany } from './net/company.js';
 
 const audio = new Synth();
 const ui = new UI({ audio });
@@ -70,12 +71,14 @@ async function boot() {
   ui.on('switchSides', () => ctrl.newGame(ctrl.humanColor ^ 1));
   ui.on('san', (t) => ctrl.onSan(t));
   ui.on('settings', () => openSettings());
+  ui.on('people', () => { ui.close('pause'); ctrl.resume(); company.open(); });
   ui.setSanInput(settings.showSanInput);
 
   function openSettings() {
     ui.showSettings(settings, {
       autoTier, tier: stage.tierName, gpu: info.gpu.slice(0, 60), fps: Math.round(1000 / stage.governor.ema),
       pixelRatio: (stage.pixelRatio || 1).toFixed(2),
+      idleAuto: idleMotion('auto', { coarse: info.coarse, tier: stage.tierName, reducedMotion: settings.reducedMotion }),
     }, (key, value) => {
       settings[key] = value;
       saveSettings(settings);
@@ -100,7 +103,8 @@ async function boot() {
   stage.onContextLost = () => ui.toast('Graphics were reset by the browser — restoring…');
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && ctrl.phase !== 'title' && !ctrl.paused && ctrl.phase !== 'over') ctrl.pause();
+    // In a room there is no AI to hold back, and the menu would only be in the way on coming back.
+    if (document.hidden && !ctrl.room && ctrl.phase !== 'title' && !ctrl.paused && ctrl.phase !== 'over') ctrl.pause();
   });
   window.addEventListener('resize', () => stage.refreshInsets());
 
@@ -110,6 +114,10 @@ async function boot() {
   idle(() => stage.warmup(), { timeout: 2500 });
 
   installTestHooks({ stage, ctrl, ui, info, settings });
+
+  // ---- friends: a room on a p3p2 server (see net/company.js) ----
+  const company = openCompany(ctrl, ui);
+  ctrl.onLeftRoom = () => showTitle(ctrl);
 }
 
 function showTitle(ctrl) {

@@ -60,6 +60,15 @@ export function chooseTier(info) {
   return tier;
 }
 
+/**
+ * How much the pieces move at rest: 'full', 'calm' or 'off'. Auto is calm on phones and on Low, where the screen is
+ * small and frames come at 30 a second, and with reduced motion; full otherwise.
+ */
+export function idleMotion(choice, { coarse = false, tier = 'medium', reducedMotion = false } = {}) {
+  if (choice === 'full' || choice === 'calm' || choice === 'off') return choice;
+  return coarse || tier === 'low' || reducedMotion ? 'calm' : 'full';
+}
+
 export function stepTier(name, delta) {
   const i = TIER_NAMES.indexOf(name);
   return TIER_NAMES[Math.max(0, Math.min(TIER_NAMES.length - 1, i + delta))];

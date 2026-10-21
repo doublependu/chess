@@ -24,8 +24,9 @@ export default defineConfig({
       transformIndexHtml: (html) => html.replaceAll('%APP_VERSION%', VERSION),
     },
   ],
-  // Rapier's wasm glue must not be pre-bundled (it would end up as two module instances).
-  optimizeDeps: { exclude: ['@dimforge/rapier3d'] },
+  // Rapier's wasm glue must not be pre-bundled (it would end up as two module instances). p3p2's client neither: its
+  // room client and panel load only when a room is opened, and pre-bundling would put them all in the entry.
+  optimizeDeps: { exclude: ['@dimforge/rapier3d', '@p3p2/client'] },
   worker: {
     format: 'es',
     plugins: () => [wasm()],

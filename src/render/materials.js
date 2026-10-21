@@ -84,14 +84,27 @@ export function createDecorMaterial() {
   return patchWarp(new MeshBasicMaterial({ color: '#120c18' }), 'decor');
 }
 
-/** Inverted-hull outline: back faces pushed out along the normal. */
+/**
+ * The outline's width on screen, set by the stage: never under `uMinPx` render pixels (`uWorldPerPx` is the size of
+ * one at distance 1). Thinner than that, and without MSAA, a line breaks into dashes that crawl as the pieces move.
+ */
+export const outlineUniforms = {
+  uMinPx: { value: 1.5 },
+  uWorldPerPx: { value: 0 },
+};
+
+/** Inverted-hull outline: back faces pushed out along the normal, by `thickness` or the minimum width, whichever is more. */
 export function createOutlineMaterial(thickness = 0.014) {
   const m = new MeshBasicMaterial({ color: OUTLINE_COLOR, side: BackSide });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uThick = { value: thickness };
-    shader.vertexShader = 'uniform float uThick;\n' + shader.vertexShader.replace(
+    shader.uniforms.uMinPx = outlineUniforms.uMinPx;
+    shader.uniforms.uWorldPerPx = outlineUniforms.uWorldPerPx;
+    shader.vertexShader = 'uniform float uThick;\nuniform float uMinPx;\nuniform float uWorldPerPx;\n' + shader.vertexShader.replace(
       '#include <begin_vertex>',
-      '#include <begin_vertex>\ntransformed += normalize(normal) * uThick;',
+      `#include <begin_vertex>
+       float outlineDepth = -(modelViewMatrix * vec4(transformed, 1.0)).z;
+       transformed += normalize(normal) * max(uThick, uMinPx * uWorldPerPx * outlineDepth);`,
     );
     shader.uniforms.uTimeWarp = globalUniforms.uTimeWarp;
   };

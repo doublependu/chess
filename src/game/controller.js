@@ -37,6 +37,12 @@ export class Controller {
     this.rated = false;
     this.finale = null;
     this.events = [];
+    /** In a room (`src/net/company.js`): the table is the truth, and the other side is a person. Null: the AI. */
+    this.room = null;
+    /** The move this page sent and has not seen come back yet: { n, ply, uci }. */
+    this.sent = null;
+    /** Which of the table's games the board shows. */
+    this.roomN = 0;
     stage.views.reset(this.game.pieces());
   }
 
@@ -45,7 +51,9 @@ export class Controller {
     if (this.events.length > 500) this.events.shift();
   }
 
-  get humanTurn() { return this.game.turn === this.humanColor && !this.game.over; }
+  /** The colour this page plays: against the AI, the human's; in a room, its seat, or -1 for somebody watching. */
+  get mySeat() { return this.room ? this.room.table.seatOf(this.room.me) : this.humanColor; }
+  get humanTurn() { return this.game.turn === this.mySeat && !this.game.over; }
   get canInteract() { return this.phase === 'human' && !this.paused && !this.ui.open && !this.stage.animator.busy; }
   get animSpeed() { return this.settings.animSpeed || 1; }
 
@@ -57,6 +65,7 @@ export class Controller {
   // ------------------------------------------------------------------ game lifecycle
 
   newGame(color) {
+    if (this.room) return;
     this.token++;
     this.ai.cancel();
     this.stage.animator.finishAll();
@@ -82,6 +91,7 @@ export class Controller {
 
   /** Restores a snapshot directly (no rewind animation) — used by "Continue". */
   restore(snap) {
+    if (this.room) return false;
     const game = restoreGame(snap);
     if (!game) { this.ui.toast('That save could not be read.'); return false; }
     this.token++;
@@ -115,6 +125,12 @@ export class Controller {
 
   nextTurn() {
     if (this.game.over) { this.onGameOver(); return; }
+    if (this.room) {
+      if (this.humanTurn && !this.sent) this.startHumanTurn();
+      else if (this.sent) { this.phase = 'sent'; this.roomHud(); }
+      else this.waitForMove();
+      return;
+    }
     if (this.game.turn === this.humanColor) this.startHumanTurn();
     else this.aiTurn();
   }
@@ -122,6 +138,7 @@ export class Controller {
   startHumanTurn() {
     this.phase = 'human';
     this.ui.setTurn(true);
+    if (this.room) { this.roomHud(); return; }
     // Analyse the position while the human thinks (for grading their move).
     const token = this.token;
     const moves = this.game.uciList();
@@ -158,7 +175,7 @@ export class Controller {
     if (!this.canInteract || !square) return;
     if (this.selected && floor && floor !== square && this.legalFrom.has(floor) && !this.legalFrom.has(square)) square = floor;
     const piece = this.game.pieceAt(square);
-    const own = piece && piece.color === this.humanColor;
+    const own = piece && piece.color === this.mySeat;
     if (this.selected) {
       if (square === this.selected) { this.select(null); return; }
       if (this.legalFrom.has(square)) { this.tryMove(this.selected, square); return; }
@@ -189,7 +206,7 @@ export class Controller {
     if (!options.length) return;
     let uci = options[0];
     if (options.length > 1) {
-      const type = await this.ui.pickPromotion(this.humanColor);
+      const type = await this.ui.pickPromotion(this.mySeat);
       if (!type) { this.select(null); return; }
       uci = options.find((u) => u.endsWith(' pnbrqk'[type])) || options[0];
     }
@@ -215,6 +232,7 @@ export class Controller {
   }
 
   async humanMove(uci) {
+    if (this.room) { this.sendMove(uci); return; }
     const token = this.token;
     const pre = this.preEval;
     const rec = this.game.play(uci);
@@ -308,12 +326,14 @@ export class Controller {
     this.stage.checkSquare = g.inCheck() ? g.kingSquare(g.turn) : null;
     this.ui.setCaptured(this.humanColor, g);
     this.ui.setTurn(this.humanTurn, { over: g.over });
-    this.ui.setSaveEnabled(g.ply > 0 && this.phase !== 'rewinding');
+    // A room's game is the room's: nobody saves a checkpoint of it, or overwrites their own game with it.
+    this.ui.setSaveEnabled(!this.room && g.ply > 0 && this.phase !== 'rewinding');
     if (rec?.check && !rec.mate) {
       setTimeout(() => { this.audio.check(); this.ui.banner('Check!', 1100); }, 350 / this.animSpeed);
     }
     this.updateHighlights();
-    if (g.ply > 0) saveAutosave(this.snap('Autosave'));
+    if (this.room) this.roomHud();
+    else if (g.ply > 0) saveAutosave(this.snap('Autosave'));
   }
 
   updateHighlights() {
@@ -358,6 +378,7 @@ export class Controller {
   }
 
   showGameOver(rate) {
+    if (this.room) { this.showRoomGameOver(); return; }
     const r = this.game.result;
     const human = this.humanColor;
     const score = r.winner === null ? 0.5 : r.winner === human ? 1 : 0;
@@ -388,6 +409,11 @@ export class Controller {
   }
 
   resign() {
+    if (this.room) {
+      if (!this.game.over && this.mySeat !== -1) this.room.submit({ t: 'resign', n: this.room.table.n });
+      this.ui.closeAll();
+      return;
+    }
     if (this.game.over || this.phase === 'rewinding') return;
     this.token++;
     this.ai.cancel();
@@ -400,6 +426,7 @@ export class Controller {
 
   pause() {
     if (this.phase === 'title' || this.paused) return;
+    if (this.room) { this.roomMenu(); return; }
     this.paused = true;
     this.stage.animator.timeScale = 0;
     this.select(null);
@@ -450,6 +477,7 @@ export class Controller {
   }
 
   openSave() {
+    if (this.room) return;
     if (this.game.ply === 0 || this.phase === 'rewinding') { this.ui.toast('Make a move first.'); return; }
     const slots = loadSlots();
     this.ui.showSlots('save', slots, async (i, existing) => {
@@ -463,6 +491,7 @@ export class Controller {
   }
 
   openLoad() {
+    if (this.room) return;
     const slots = loadSlots();
     if (!slots.some(Boolean)) { this.ui.toast('No checkpoints saved yet.'); return; }
     this.ui.showSlots('load', slots, (i, snap) => {
@@ -568,6 +597,232 @@ export class Controller {
     this.nextTurn();
   }
 
+  // ------------------------------------------------------------------ a room
+
+  /**
+   * Into a room. `room` is `src/net/company.js`'s handle: `table`, `me` (this player's id), `submit(op)`,
+   * `presence(pid)`. The game against the AI is left where it was; its autosave stays for later.
+   */
+  enterRoom(room) {
+    this.room = room;
+    this.ui.setRoomMode(true);
+    this.paused = false;
+    this.stage.animator.timeScale = 1;
+    this.adoptTable();
+  }
+
+  /** Out of the room: back to the title, and to the AI. */
+  leaveRoom() {
+    if (!this.room) return;
+    this.room = null;
+    this.sent = null;
+    clearTimeout(this.sentTimer);
+    this.token++;
+    this.stage.animator.finishAll();
+    this.clearFinale();
+    this.ui.closeAll();
+    this.ui.setNames('You', 'AI');
+    this.ui.setRoomMode(false);
+    this.game = new Game();
+    this.humanColor = 0;
+    this.stage.views.reset(this.game.pieces());
+    this.stage.setSide(0);
+    this.ui.setSides(0);
+    this.select(null);
+    this.phase = 'title';
+    this.onLeftRoom?.();
+  }
+
+  /** The board as the table has it, at once and without animation: on entering, and whenever the two disagree. */
+  adoptTable() {
+    const t = this.room.table;
+    this.token++;
+    this.ai.cancel();
+    this.stage.animator.finishAll();
+    this.clearFinale();
+    this.ui.closeAll();
+    this.select(null);
+    this.sent = null;
+    clearTimeout(this.sentTimer);
+    this.roomN = t.n;
+    this.game = t.copy();
+    const seat = this.mySeat;
+    this.humanColor = seat === -1 ? 0 : seat;
+    this.replayViews();
+    this.stage.setSide(this.humanColor);
+    this.ui.setSides(this.humanColor);
+    this.ui.showHud(true);
+    this.stage.refreshInsets();
+    this.phase = 'between';
+    this.afterPositionChange();
+    this.log('table', { n: t.n, ply: t.moves.length });
+    if (this.game.over) { this.phase = 'over'; this.ui.setTurn(false, { over: true }); this.roomHud(); }
+    else this.nextTurn();
+  }
+
+  /**
+   * The table changed: catch the board up with it, one move at a time and animated, or all at once when it is not
+   * a move or two further along the same game. Called again when each animation is done.
+   */
+  follow() {
+    if (!this.room) return;
+    const t = this.room.table;
+    if (this.phase === 'animating') return;
+    const mine = this.game.uciList();
+    const same = this.roomN === t.n && mine.length <= t.moves.length && mine.every((u, i) => u === t.moves[i]);
+    // Somebody sat down or got up: which side this page plays may have changed.
+    const seat = this.mySeat;
+    if (!same || (seat !== -1 && seat !== this.humanColor)) { this.adoptTable(); return; }
+    if (mine.length < t.moves.length) {
+      const rec = this.game.play(t.moves[mine.length]);
+      if (this.sent && this.sent.ply <= rec.ply) { this.sent = null; clearTimeout(this.sentTimer); }
+      this.select(null);
+      const token = this.token;
+      const anim = this.animateMove(rec);
+      this.afterPositionChange(rec);
+      this.phase = 'animating';
+      anim.blocking.then(() => {
+        if (token !== this.token) return;
+        this.phase = 'between';
+        this.follow();
+      });
+      return;
+    }
+    if (t.ended && !this.game.over) {
+      if (t.ended.how === 'resign') this.game.resign(t.ended.by);
+      else this.game.agree();
+      this.select(null);
+      this.afterPositionChange();
+    }
+    if (this.game.over) {
+      if (this.phase !== 'over') this.onGameOver();
+      this.roomHud();
+      return;
+    }
+    if (this.phase !== 'human') this.nextTurn();
+    else this.roomHud();
+  }
+
+  /** The other side's move: it comes through the table. */
+  waitForMove() {
+    this.phase = 'remote';
+    this.ui.setTurn(false);
+    this.roomHud();
+  }
+
+  /** This side's move, as an op: the board plays it when it comes back, as every other page does. */
+  sendMove(uci) {
+    const t = this.room.table;
+    const sent = { n: t.n, ply: this.game.ply, uci };
+    if (!this.room.submit({ t: 'move', ...sent })) {
+      this.ui.toast('Not connected: the move was not sent. Try again in a moment.');
+      return;
+    }
+    this.sent = sent;
+    this.phase = 'sent';
+    this.log('sent', sent);
+    this.roomHud();
+    // An op on its way when the connection drops never arrives (p3p2 sends it once). So it goes again: the table
+    // takes a ply only once, so a copy that comes late changes nothing. After a few tries the move is the player's
+    // to make again.
+    clearTimeout(this.sentTimer);
+    let tries = 1;
+    const again = () => {
+      if (this.sent !== sent || !this.room) return;
+      if (tries < 4 && this.room.submit({ t: 'move', ...sent })) {
+        tries++;
+        this.log('resent', sent);
+        this.sentTimer = setTimeout(again, 4000);
+        return;
+      }
+      this.sent = null;
+      if (this.phase === 'sent') {
+        this.ui.toast('The move did not reach the room: play it again.');
+        this.nextTurn();
+      }
+    };
+    this.sentTimer = setTimeout(again, 4000);
+  }
+
+  /** Who is where, whose move it is, and who is not here: the two name plates. */
+  roomHud() {
+    if (!this.room) return;
+    const t = this.room.table;
+    const seat = this.mySeat;
+    const bottom = seat === -1 ? 0 : seat;
+    const top = bottom ^ 1;
+    const plate = (c) => (t.seats[c] ? t.names[c] : c === 0 ? 'White: empty seat' : 'Black: empty seat');
+    this.ui.setNames(seat === -1 ? plate(bottom) : `${t.names[seat]} (you)`, plate(top));
+    const status = (c) => {
+      if (this.game.over) return 'Game over';
+      if (!t.seats[c]) return 'Waiting for a player';
+      const here = this.room.presence(t.seats[c]);
+      const away = here === 'away' ? ' · away' : here === 'lost' ? ' · connection lost' : here === null ? ' · not here' : '';
+      if (c === seat && this.phase === 'sent') return 'Sending…';
+      if (t.offer && t.offer.ply === t.moves.length && t.offer.by === c) return (c === seat ? 'Draw offered' : 'Offers a draw') + away;
+      return (this.game.turn === c ? (c === seat ? 'Your move' : 'To move') : 'Waiting') + away;
+    };
+    this.ui.setTurn(this.game.turn === bottom && !this.game.over, { over: this.game.over, youText: status(bottom), aiText: status(top) });
+  }
+
+  /** The game is over: who won, said from where this page sits, and the next game for whoever is seated. */
+  showRoomGameOver() {
+    const t = this.room.table;
+    const r = this.game.result;
+    const seat = this.mySeat;
+    const reasons = {
+      [RESULT.CHECKMATE]: 'by checkmate', [RESULT.STALEMATE]: 'Stalemate', [RESULT.THREEFOLD]: 'Threefold repetition',
+      [RESULT.FIFTY]: 'Fifty-move rule', [RESULT.INSUFFICIENT]: 'Insufficient material', [RESULT.RESIGN]: 'by resignation',
+      [RESULT.AGREED]: 'Agreed',
+    };
+    const who = (c) => t.names[c] || (c === 0 ? 'White' : 'Black');
+    const title = r.winner === null ? 'Draw' : r.winner === seat ? 'You win!' : `${who(r.winner)} wins`;
+    const reason = r.winner === null ? reasons[r.status] : `${r.winner === seat ? 'You won' : `${who(r.winner)} won`} ${reasons[r.status]}`;
+    this.log('gameOver', { status: r.status, winner: r.winner });
+    if (seat !== -1) this.audio.jingle(r.winner === null || r.winner === seat);
+    this.ui.showRoomGameOver({
+      title, reason, win: r.winner === seat,
+      glyph: r.winner === null ? '½' : GLYPH[r.winner][6],
+      onRematch: seat === -1 ? null : () => this.room?.submit({ t: 'new', n: t.n }),
+    });
+  }
+
+  /** The menu in a room: no saving, no AI; a draw, resigning, and the seat. */
+  roomMenu() {
+    const t = this.room.table;
+    const seat = this.mySeat;
+    const playing = seat !== -1 && !this.game.over;
+    const free = t.seats.indexOf(null);
+    const standing = t.offer && t.offer.ply === t.moves.length;
+    this.ui.showRoomMenu({
+      seated: seat !== -1,
+      canOffer: playing && !standing,
+      // The question about a draw is asked once; an answer lost on the way (or a "Cancel" regretted) is given here.
+      canAccept: playing && standing && t.offer.by !== seat,
+      onAccept: () => this.room?.submit({ t: 'accept', n: t.n, ply: t.moves.length }),
+      canResign: playing,
+      canNew: seat !== -1 && (this.game.over || t.moves.length === 0),
+      canSit: seat === -1 && free !== -1,
+      onOffer: () => this.room?.submit({ t: 'offer', n: t.n, ply: t.moves.length }),
+      onResign: async () => { if (await this.ui.confirm('Resign this game?', 'Resign')) this.resign(); },
+      onNew: () => this.room?.submit({ t: 'new', n: t.n }),
+      onStand: async () => {
+        const lose = playing && t.moves.length > 0;
+        if (!lose || (await this.ui.confirm('Give up your seat? The game in progress counts as lost.', 'Give up the seat'))) this.room?.submit({ t: 'stand' });
+      },
+      onSit: () => this.room?.sit(free),
+    });
+  }
+
+  /** The other side offers a draw. */
+  async offered(by) {
+    const t = this.room.table;
+    if (this.mySeat === -1 || this.mySeat === by) return;
+    const ply = t.moves.length;
+    const yes = await this.ui.confirm(`${t.names[by] || 'Your opponent'} offers a draw.`, 'Accept the draw');
+    if (yes && this.room && this.room.table.offer?.ply === ply) this.room.submit({ t: 'accept', n: t.n, ply });
+  }
+
   // ------------------------------------------------------------------ debug/test hooks
 
   state() {
@@ -576,6 +831,10 @@ export class Controller {
       over: this.game.over, result: this.game.result, busy: this.stage.animator.busy, animating: this.stage.animator.active,
       paused: this.paused, overlay: this.ui.top || null, aiElo: Math.round(this.lastAIElo), rating: this.player.rating,
       tier: this.stage.tierName, moves: this.game.uciList(),
+      room: this.room ? {
+        seat: this.mySeat, n: this.room.table.n, seats: this.room.table.seats.slice(), names: this.room.table.names.slice(),
+        moves: this.room.table.moves.slice(), offer: this.room.table.offer, fingerprint: this.room.table.fingerprint(), sent: this.sent,
+      } : null,
     };
   }
 

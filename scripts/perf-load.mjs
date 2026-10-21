@@ -1,5 +1,7 @@
 // Time-to-interactive under throttled network + CPU (cold cache), measured from navigation start
 // to the app's `tti` performance mark (first rendered frame with input attached).
+// Also checks that an ordinary visit (no invite in the address) talks to no other server: p3p2 only connects
+// when a room is opened.
 // Usage: npm run perf:load [-- --runs 3 --url http://localhost:4173/]
 import { parseArgs, startServer, launch, outDir } from '../playtest/lib.mjs';
 import { writeFileSync } from 'node:fs';
@@ -44,6 +46,20 @@ try {
     results.push({ profile: p.name, ttiMs: Math.round(med.tti), fcpMs: Math.round(med.fcp || 0), status, runs });
     console.log(`${status.padEnd(4)} ${p.name.padEnd(40)} TTI ${Math.round(med.tti)} ms (first paint ${Math.round(med.fcp || 0)} ms) [warn > ${p.warn}, fail > ${p.fail}]`);
   }
+  // A plain visit, left for a few seconds after it is interactive, so the deferred work has run.
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  const origin = new URL(server.url).origin;
+  const foreign = [];
+  page.on('request', (r) => { const u = r.url(); if (/^https?:/.test(u) && new URL(u).origin !== origin) foreign.push(u); });
+  page.on('websocket', (ws) => foreign.push(ws.url()));
+  await page.goto(server.url);
+  await page.waitForFunction(() => performance.getEntriesByName('tti').length > 0, null, { timeout: 30000, polling: 50 });
+  await page.waitForTimeout(3000);
+  await ctx.close();
+  if (foreign.length) failed = true;
+  results.push({ check: 'plain visit talks to no other server', ok: !foreign.length, foreign });
+  console.log(`${foreign.length ? 'FAIL' : 'ok  '} plain visit talks to no other server${foreign.length ? ': ' + foreign.join(', ') : ''}`);
 } finally {
   await browser.close();
   server.stop();
