@@ -36,6 +36,30 @@ Answers `prompt_1.md` and follows `plan_1.md`. Nothing is committed.
 
 - **`playtest/lib.mjs` `startServer()` left `vite preview` running after a run.** It stopped only `npx`, not vite. Later runs then reused the leftover server; it served the current `dist/`, so their results still hold. It now runs in its own process group and is stopped as a whole.
 
+## Follow-up: the line under the pieces
+
+You reported that the outline at the bottom of the pieces came and went on PC and was always missing on your phone.
+
+- **Cause:** the bases sit on the board top (y = 0), and the outline hull was pushed out along the normals, which point mostly down at the foot. So the hull went under the board.
+  - On PC the line showed only while a piece bobbed up.
+  - On a phone the outline is wider than the foot's 0.025 bevel, so the line was almost always under the board.
+  - The king's check shake also tilted one side of the foot under the board.
+- **Fix:**
+  - Below `FOOT_BEVEL` (`pieces/geometry.js`), the hull goes out, not down, and 1.3× further, because a ring on the board is seen at an angle.
+  - The hull is never lower than 0.008 above the base. That is over the board and its highlights (0.004), and under the move markers (0.012).
+  - The shaking king is lifted by as much as its tilt dips the foot.
+- **Probe:** the outline probe now keeps the board as an occluder and measures the line under each piece. Before → after:
+
+  | | Average | Worst piece | Range over 60 frames |
+  |---|---|---|---|
+  | Pixel 5, Low | 0.11 | 0 | 0.08–0.14 |
+  | → after | 1.0 | 1.0 | 1.0 |
+  | Desktop, Full idle | 0.58 | 0.10 | 0.55–0.60 |
+  | → after | 0.81 | 0.42 | 0.80–0.82 |
+
+  Desktop reads low because MSAA softens every edge there; its sides read the same.
+- **Tests:** unit tests and `npm run playtest` all pass.
+
 ## Checked by eye (screenshots, Pixel 5 and desktop)
 
 - The title and pause menus show "Need a room? Make one free at p3p2.me ↗" under 👥.

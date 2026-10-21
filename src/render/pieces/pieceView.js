@@ -130,6 +130,7 @@ export class PieceView {
     this.pick.scale.set(1, g.height + 0.05, 1);
     if (this.blob) this.blob.scale.setScalar(g.radius * 2.6);
     this.height = g.height;
+    this.radius = g.radius;
     this.facing = this.defaultFacing();
   }
 

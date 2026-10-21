@@ -1,6 +1,7 @@
 import {
   MeshToonMaterial, MeshBasicMaterial, DataTexture, RedFormat, NearestFilter, Color, BackSide,
 } from 'three';
+import { FOOT_BEVEL } from './pieces/geometry.js';
 
 // Uniforms shared by every patched material (one object, so updating it updates all shaders).
 export const globalUniforms = {
@@ -93,7 +94,15 @@ export const outlineUniforms = {
   uWorldPerPx: { value: 0 },
 };
 
-/** Inverted-hull outline: back faces pushed out along the normal, by `thickness` or the minimum width, whichever is more. */
+/** Lowest the outline goes, above the piece's base: over the board and its move highlights (0.004). */
+const OUTLINE_FLOOR = 0.008;
+
+/**
+ * Inverted-hull outline: back faces pushed out along the normal, by `thickness` or the minimum width, whichever is
+ * more. At the foot the hull goes out, not down: pushed down it would be under the board, and the line where the
+ * piece stands would come and go as it bobs. Seen from above, a ring on the board looks narrower than it is, so it
+ * goes out a little further.
+ */
 export function createOutlineMaterial(thickness = 0.014) {
   const m = new MeshBasicMaterial({ color: OUTLINE_COLOR, side: BackSide });
   m.onBeforeCompile = (shader) => {
@@ -104,7 +113,13 @@ export function createOutlineMaterial(thickness = 0.014) {
       '#include <begin_vertex>',
       `#include <begin_vertex>
        float outlineDepth = -(modelViewMatrix * vec4(transformed, 1.0)).z;
-       transformed += normalize(normal) * max(uThick, uMinPx * uWorldPerPx * outlineDepth);`,
+       vec3 outlineDir = normalize(normal);
+       if (transformed.y < ${FOOT_BEVEL.toFixed(3)} && outlineDir.y < 0.0) {
+         float side = length(outlineDir.xz);
+         outlineDir = side > 0.001 ? vec3(outlineDir.x, 0.0, outlineDir.z) * (1.3 / side) : vec3(0.0);
+       }
+       transformed += outlineDir * max(uThick, uMinPx * uWorldPerPx * outlineDepth);
+       transformed.y = max(transformed.y, ${OUTLINE_FLOOR.toFixed(3)});`,
     );
     shader.uniforms.uTimeWarp = globalUniforms.uTimeWarp;
   };

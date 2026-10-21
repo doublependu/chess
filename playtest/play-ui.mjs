@@ -271,8 +271,8 @@ async function scenarioOutline(browser, url) {
       results.push({ ...run, scale, ...stats });
       const phone = run.device !== 'desktop';
       checks.push({
-        check: `${run.device} ${run.quality} ×${scale}, idle ${stats.idle}: outline unbroken (min coverage ${stats.minCoverage}, width ${stats.width} px, flicker ${stats.flicker})`,
-        ok: !phone || stats.minCoverage >= 0.9,
+        check: `${run.device} ${run.quality} ×${scale}, idle ${stats.idle}: outline unbroken (min coverage ${stats.minCoverage}, min bottom ${stats.minBottom}, width ${stats.width} px, flicker ${stats.flicker})`,
+        ok: !phone || (stats.minCoverage >= 0.9 && stats.minBottom >= 0.9),
       });
     }
     await page.evaluate(() => window.__test.holdClock(10));

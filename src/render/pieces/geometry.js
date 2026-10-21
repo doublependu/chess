@@ -118,6 +118,9 @@ function toGeometry(m) {
 
 // ---------- piece definitions ----------
 
+/** The bevel at the bottom of every piece's foot is below this height (the outline treats it apart: materials.js). */
+export const FOOT_BEVEL = 0.03;
+
 function baseProfile(r, top) {
   // Wide, chunky foot shared by all pieces (scaled by r).
   const k = r / 0.33;

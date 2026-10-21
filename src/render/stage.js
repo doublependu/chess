@@ -355,6 +355,8 @@ export class Stage {
       v.idleG.rotation.y = (v.type === 2 ? Math.sin(t * 0.6) * m.knight : Math.sin(t * 0.4) * m.sway) * amp;
       const inCheck = this.checkSquare && v.square === this.checkSquare && v.type === 6 && v.alive;
       v.idleG.rotation.z = inCheck && !this.frozen ? Math.sin(this.time * 38) * 0.035 : 0;
+      // The shake tilts the king about the middle of its foot: lifted by as much, the edge stays on the board.
+      v.idleG.position.y += Math.abs(Math.sin(v.idleG.rotation.z)) * (v.radius + 0.05);
       if (!v.inClip) {
         if (inCheck) v.setFlash(0.35 + Math.sin(this.time * 6) * 0.25, CHECK_RED);
         else if (v === this.selected) v.setFlash(0.12, SELECT_GOLD);

@@ -90,6 +90,7 @@ export class BoardView {
     const slab = new Mesh(new BoxGeometry(total, 0.5, total), patchWarp(new MeshLambertMaterial({ color: '#46302a' }), 'slab'));
     slab.position.y = -0.262; // top sits 1 cm below the playing surface (no z-fighting)
     slab.receiveShadow = receiveShadow;
+    this.slab = slab;
     this.group.add(slab);
     // Highlight overlay: an 8x8 data texture sampled with nearest filtering.
     this.hlData = new Uint8Array(8 * 8 * 4);
