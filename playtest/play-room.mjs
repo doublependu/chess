@@ -1,5 +1,6 @@
 // Chess with a friend, played for real: the production build, a p3p2 server, and three people in one room. A host on
-// a desktop (white), a guest on a phone (black, by touch), and a watcher. Writes a report and videos to
+// a desktop (white), a guest on a phone (black, by touch), and a watcher, who all come in by the room's invite link
+// from the server's portal. Writes a report and videos to
 // playtest-output/room-* (gitignored).
 //
 // Needs a p3p2 server. By default one is started from the p3p2 checkout next to this one (../p3p2), in memory:
@@ -77,21 +78,30 @@ async function lagProxy(server) {
   return listen;
 }
 
-/** The owner's side: logs in to the portal and makes a room for the game's address. Returns its room URL. */
+/** The owner's side: logs in to the portal and makes a room for the game's address. Returns its invite link. */
 async function createRoom(browser, server, gameUrl) {
   const ctx = await browser.newContext();
   const portal = await ctx.newPage();
-  await portal.goto(`${server.url}/`);
+  // Not the server's address: once a room is on its front page, that is the front page.
+  await portal.goto(`${server.url}/login`);
   await portal.getByLabel('Password').fill(server.password);
   await portal.getByRole('button', { name: 'Log in' }).click();
   await portal.getByLabel('Game URL').fill(gameUrl);
   await portal.getByLabel('Room name').fill('Sky Arena playtest');
   await portal.getByRole('button', { name: 'Create room' }).click();
   await portal.getByRole('heading', { name: 'Sky Arena playtest' }).waitFor();
-  const roomUrl = await portal.getByLabel('Room URL').inputValue();
+  const link = portal.getByLabel('Invite link', { exact: true });
+  // A server before 0.2 makes no invite with the room: the owner creates it.
+  if (!(await link.isVisible())) await portal.getByRole('button', { name: 'Create invite' }).click();
+  const invite = await link.inputValue();
   await ctx.close();
-  return roomUrl;
+  return invite;
 }
+
+/** What an invite carries: `?room=<server>/<code>`. */
+const roomOf = (invite) => new URL(invite).searchParams.get('room');
+/** The same invite through another port of its server: the lag proxy's. */
+const through = (invite, port) => invite.replace(/([?&]room=[^&#]*:)\d+\//, `$1${port}/`);
 
 // ---------------------------------------------------------------- the people
 
@@ -185,14 +195,9 @@ let people = [];
 try {
   const server = await p3p2Server();
   const gameUrl = game.url;
-  let roomUrl = await createRoom(browser, server, gameUrl);
-  if (args.lag) {
-    const port = await lagProxy(server);
-    const u = new URL(roomUrl);
-    u.port = String(port);
-    roomUrl = u.toString();
-  }
-  check('the portal made a room for the game', /^https?:\/\//.test(roomUrl), { roomUrl });
+  let invite = await createRoom(browser, server, gameUrl);
+  if (args.lag) invite = through(invite, await lagProxy(server));
+  check('the portal made a room for the game, and its invite', !!roomOf(invite), { invite });
 
   const ada = await person(browser, 'desktop', 'Ada');
   const grace = await person(browser, 'pixel5', 'Grace');
@@ -209,20 +214,15 @@ try {
   await settle(ada);
   const beforeRoom = await st(ada);
 
-  // Ada hosts from the pause menu.
-  await ada.page.keyboard.press('Escape');
-  await ada.page.getByRole('button', { name: /Play with a friend/ }).click();
-  await ada.page.getByLabel('Your name').fill('Ada');
-  await ada.page.getByLabel('Room URL').fill(roomUrl);
-  await ada.page.getByRole('status').filter({ hasText: '✓' }).waitFor({ timeout: 15000 });
-  await ada.page.getByRole('button', { name: 'Create a multiplayer game room for my friends' }).click();
-  const linkBox = ada.page.getByLabel('Invite link', { exact: true });
-  await linkBox.waitFor();
-  const invite = await linkBox.inputValue();
-  await closePanel(ada);
+  // Ada opens the invite in the same tab: everybody joins by it, the room's owner too. The first one in hosts.
+  await openFromInvite(ada, invite);
   const adaRoom = await until(async () => { const r = await room(ada); return r && r.seat === 0 ? r : null; }, 15000);
   check('the host takes white', adaRoom?.seat === 0, { invite });
   check('in a room, the checkpoint buttons go', await ada.page.locator('#hud-actions-top').isHidden());
+  await ada.page.click('#btn-people');
+  const passOn = await ada.page.getByLabel('Invite link', { exact: true }).inputValue();
+  check("the 👥 panel passes on the room's invite", roomOf(passOn) === roomOf(invite), { passOn });
+  await closePanel(ada);
 
   await openFromInvite(grace, invite);
   const graceRoom = await until(async () => { const r = await room(grace); return r && r.seat === 1 ? r : null; }, 15000);

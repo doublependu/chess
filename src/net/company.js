@@ -31,7 +31,7 @@ export function openCompany(ctrl, ui) {
   let mayRetry = true;
 
   const handle = {
-    /** The panel: the room, the invite, chat, leaving; or, with no room, making one. */
+    /** The panel: the room, the invite, chat, leaving; or, with no room, where an invite comes from. */
     open() { p3p2.open(); },
     get table() { return table; },
     get me() { return room ? room.self.pid : null; },

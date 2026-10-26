@@ -47,7 +47,9 @@ npm run playtest:room        # two players and a watcher in a p3p2 room (needs .
 
 ## Playing with a friend
 
-👥 opens the [p3p2](https://p3p2.me/#start) room window: paste a room URL from a p3p2 server's portal and send the invite.
+A room is joined by its invite link, which the owner of a [p3p2](https://p3p2.me/#start) server sends out (or shows on
+the server's front page): everybody opens it, the owner too, and the first two in play. 👥 opens the room window:
+who's here, chat, and the same link and its QR code to pass on.
 For testing on one machine use two browsers or a private window (two tabs of one browser are one player).
 `npm run playtest:room -- --lag` runs the room test through p3p2's lag proxy.
 
