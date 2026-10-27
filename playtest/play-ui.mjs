@@ -6,15 +6,17 @@
 //   node playtest/play-ui.mjs --scenarios game,checkpoint --personas club --max-moves 30
 //   node playtest/play-ui.mjs --url http://localhost:5173/ --no-build --headed
 //   node playtest/play-ui.mjs --scenarios outline --no-video   # outline coverage/flicker on phone and desktop
+//   node playtest/play-ui.mjs --scenarios corners              # p3p2's button: on screen, clear of the HUD, opens the panel
 import { writeFileSync, mkdirSync } from 'node:fs';
 import {
   parseArgs, outDir, startServer, launch, MOBILE, watchErrors, openGame, idle, state, playMove, tapSquare, fenBoard,
 } from './lib.mjs';
 import { PERSONAS, PersonaPlayer } from './personas.js';
+import { Human } from './human.mjs';
 import { mulberry32 } from '../src/ai/strength.js';
 
 const args = parseArgs({
-  scenarios: 'game,checkpoint,rotate,promotion,pause,contextloss,outline', personas: 'beginner,club', 'max-moves': 40,
+  scenarios: 'game,checkpoint,rotate,promotion,pause,corners,contextloss,outline', personas: 'beginner,club', 'max-moves': 40,
   speed: 1.8, video: true, headed: false, build: true, url: null, seed: 7,
 });
 const DIR = outDir('ui');
@@ -47,6 +49,8 @@ async function waitPly(page, ply, ms = 4000) {
 /** Plays human moves chosen by a persona until the game ends or `maxMoves` is reached. */
 async function playPersonaMoves(page, player, rng, { maxMoves, touch, issues, frames, onMove }) {
   let played = 0;
+  // Moves go through the board as a person makes them: a pointer on its way, sometimes a look at another piece.
+  const human = new Human(page, { touch, rng, style: 'fast' });
   while (played < maxMoves) {
     const s = await idle(page);
     if (s.over) break;
@@ -59,8 +63,8 @@ async function playPersonaMoves(page, player, rng, { maxMoves, touch, issues, fr
       const empty = Object.keys({ a3: 1, b4: 1, c5: 1, h3: 1, g4: 1, d5: 1 }).find((q) => !b[q]);
       if (empty) { await tapSquare(page, empty, { touch }); await page.waitForTimeout(120); }
     }
-    const drag = !touch && rng() < 0.3;
-    await playMove(page, uci, { touch, drag });
+    const drag = rng() < (touch ? 0.15 : 0.3);
+    await human.play(uci, { drag });
     if (!(await waitPly(page, s.ply))) {
       issues.push({ type: 'move-not-registered', uci, ply: s.ply, drag, touch });
       await playMove(page, uci, { touch, drag: false });
@@ -247,6 +251,56 @@ async function scenarioContextLoss(browser, url) {
   return { name: 'contextloss', checks, issues, errors, ok: checks.every((c) => c.ok) && !issues.length };
 }
 
+/** Whether two DOMRect-likes overlap (touching edges do not count). */
+const overlaps = (a, b) => a && b && a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+// p3p2's own multiplayer button has the bottom-right corner: it must be on screen, clear of every HUD control, and
+// open the same panel as "Play with a friend" in the menu. On four screen shapes, with screenshots in corners/.
+async function scenarioCorners(browser, url) {
+  const runs = [
+    { name: 'pixel5', device: 'pixel5' },
+    { name: 'pixel5-landscape', device: 'pixel5', viewport: { width: 851, height: 393 } },
+    { name: 'iphone12', device: 'iphone12' },
+    { name: 'desktop', device: 'desktop' },
+  ];
+  const checks = [], errors = [];
+  mkdirSync(`${DIR}/corners`, { recursive: true });
+  for (const run of runs) {
+    const dev = { ...MOBILE[run.device], ...(run.viewport ? { viewport: run.viewport } : {}) };
+    const ctx = await browser.newContext(dev);
+    const page = await ctx.newPage();
+    watchErrors(page, errors);
+    await openGame(page, url, { settings: SETTINGS(2) });
+    const touch = !!dev.hasTouch;
+    const press = (loc) => (touch ? loc.tap() : loc.click());
+    await press(page.getByRole('button', { name: /Play White/ }));
+    await idle(page);
+    const rects = await page.evaluate(() => {
+      const r = (el) => { if (!el || el.hidden) return null; const b = el.getBoundingClientRect(); return b.width ? { x: b.x, y: b.y, width: b.width, height: b.height } : null; };
+      const out = { p3p2: r(document.querySelector('p3p2-panel')), vw: innerWidth, vh: innerHeight };
+      for (const id of ['btn-view', 'btn-menu', 'p-you', 'p-ai', 'hud-actions-top', 'version']) out[id] = r(document.getElementById(id));
+      return out;
+    });
+    await page.screenshot({ path: `${DIR}/corners/${run.name}.png` });
+    const p = rects.p3p2;
+    const inside = p && p.x >= 0 && p.y >= 0 && p.x + p.width <= rects.vw && p.y + p.height <= rects.vh;
+    const hit = ['btn-view', 'btn-menu', 'p-you', 'p-ai', 'hud-actions-top', 'version'].filter((id) => overlaps(p, rects[id]));
+    checks.push({ check: `${run.name}: the p3p2 button is on screen in the corner, clear of ⌖, the plates and the other controls`, ok: !!inside && !hit.length, rect: p, hit });
+    // The corner button and the menu's "Play with a friend" open the same panel.
+    const card = page.locator('p3p2-panel section.card');
+    await press(page.locator('p3p2-panel button[aria-label^="Multiplayer"]').filter({ visible: true }).first());
+    const fromCorner = await card.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false);
+    await page.screenshot({ path: `${DIR}/corners/${run.name}-panel.png` });
+    await press(page.locator('p3p2-panel').getByRole('button', { name: 'Close', exact: true }));
+    await press(page.locator('#btn-menu'));
+    await press(page.getByRole('button', { name: /Play with a friend/ }));
+    const fromMenu = await card.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false);
+    checks.push({ check: `${run.name}: the corner button and "Play with a friend" both open p3p2's panel`, ok: fromCorner && fromMenu });
+    await ctx.close();
+  }
+  return { name: 'corners', checks, errors, ok: checks.every((c) => c.ok) && !errors.length };
+}
+
 // How well the piece outlines read on a phone (Low and Medium) and on a desktop, with the pieces at rest
 // (see src/debug/outlineProbe.js). Screenshots of both back ranks go to outline/.
 async function scenarioOutline(browser, url) {
@@ -307,7 +361,7 @@ try {
         }
         continue;
       }
-      const fn = { checkpoint: scenarioCheckpoint, rotate: scenarioRotate, promotion: scenarioPromotion, pause: scenarioPause, contextloss: scenarioContextLoss, outline: scenarioOutline }[sc];
+      const fn = { checkpoint: scenarioCheckpoint, rotate: scenarioRotate, promotion: scenarioPromotion, pause: scenarioPause, contextloss: scenarioContextLoss, outline: scenarioOutline, corners: scenarioCorners }[sc];
       if (!fn) { console.warn('unknown scenario', sc); continue; }
       res = await fn(browser, server.url);
     } catch (e) {

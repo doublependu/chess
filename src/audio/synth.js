@@ -1,18 +1,25 @@
 // Procedural sound effects (no audio files to download). Created lazily after the first
 // user gesture, as browsers require.
+//
+// The same sounds can be made into an OfflineAudioContext, each at a time of its own (`at`): the film script
+// (src/debug/film.js) renders a recording's sound track this way, from the sounds the game asked for.
 export class Synth {
-  constructor() {
+  /** @param {{ ctx?: BaseAudioContext }} [o] a context to play into (an offline one), instead of the speakers. */
+  constructor({ ctx = null } = {}) {
     this.ctx = null;
+    this.given = ctx;
     this.master = null;
     this.volume = 0.7;
     this.muted = false;
+    /** When the next sound starts, in the context's seconds; null: now. */
+    this.at = null;
   }
 
   ensure() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return true; }
+    if (this.ctx) { if (this.ctx.state === 'suspended' && !this.given) this.ctx.resume(); return true; }
     const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return false;
-    this.ctx = new AC();
+    if (!this.given && !AC) return false;
+    this.ctx = this.given || new AC();
     this.master = this.ctx.createGain();
     this.master.gain.value = this.muted ? 0 : this.volume;
     const comp = this.ctx.createDynamicsCompressor();
@@ -27,7 +34,10 @@ export class Synth {
   setVolume(v) { this.volume = v; if (this.master) this.master.gain.value = this.muted ? 0 : v; }
   setMuted(m) { this.muted = m; if (this.master) this.master.gain.value = m ? 0 : this.volume; }
 
-  get ok() { return this.ctx && !this.muted && this.ctx.state === 'running'; }
+  get ok() { return this.ctx && !this.muted && (!!this.given || this.ctx.state === 'running'); }
+
+  /** The time a sound starts at. */
+  now() { return this.at ?? this.ctx.currentTime; }
 
   env(node, t, a, peak, d) {
     const g = this.ctx.createGain();
@@ -48,7 +58,7 @@ export class Synth {
 
   whoosh(strength = 0.5) {
     if (!this.ok) return;
-    const t = this.ctx.currentTime;
+    const t = this.now();
     const f = this.ctx.createBiquadFilter();
     f.type = 'bandpass'; f.Q.value = 1.2;
     f.frequency.setValueAtTime(300, t);
@@ -59,7 +69,7 @@ export class Synth {
 
   thud(strength = 0.6) {
     if (!this.ok) return;
-    const t = this.ctx.currentTime;
+    const t = this.now();
     const o = this.ctx.createOscillator();
     o.frequency.setValueAtTime(140, t);
     o.frequency.exponentialRampToValueAtTime(55, t + 0.12);
@@ -73,7 +83,7 @@ export class Synth {
 
   impact(power = 1) {
     if (!this.ok) return;
-    const t = this.ctx.currentTime;
+    const t = this.now();
     const o = this.ctx.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(95, t);
@@ -88,7 +98,7 @@ export class Synth {
 
   shatter(type = 1) {
     if (!this.ok) return;
-    const t0 = this.ctx.currentTime;
+    const t0 = this.now();
     const n = 9 + type * 2;
     for (let i = 0; i < n; i++) {
       const t = t0 + Math.random() * 0.45 * Math.random();
@@ -110,7 +120,7 @@ export class Synth {
 
   wind(strength = 1) {
     if (!this.ok) return;
-    const t = this.ctx.currentTime;
+    const t = this.now();
     const f = this.ctx.createBiquadFilter();
     f.type = 'lowpass'; f.Q.value = 3;
     f.frequency.setValueAtTime(300, t);
@@ -127,7 +137,7 @@ export class Synth {
 
   chime() {
     if (!this.ok) return;
-    const t = this.ctx.currentTime;
+    const t = this.now();
     [523.25, 659.25, 783.99, 1046.5].forEach((fr, i) => {
       const o = this.ctx.createOscillator();
       o.type = 'triangle'; o.frequency.value = fr;
@@ -138,7 +148,7 @@ export class Synth {
 
   check() {
     if (!this.ok) return;
-    const t = this.ctx.currentTime;
+    const t = this.now();
     [880, 660].forEach((fr, i) => {
       const o = this.ctx.createOscillator();
       o.type = 'square'; o.frequency.value = fr;
@@ -152,7 +162,7 @@ export class Synth {
   /** Reverse-time swell: noise that grows and snaps off, with a falling tone. */
   rewind(duration = 2) {
     if (!this.ok) return;
-    const t = this.ctx.currentTime;
+    const t = this.now();
     const f = this.ctx.createBiquadFilter();
     f.type = 'bandpass'; f.Q.value = 2;
     f.frequency.setValueAtTime(2400, t);
@@ -179,7 +189,7 @@ export class Synth {
 
   jingle(win) {
     if (!this.ok) return;
-    const t = this.ctx.currentTime;
+    const t = this.now();
     const notes = win ? [523.25, 659.25, 783.99, 1046.5, 1318.5] : [440, 392, 349.2, 293.7];
     notes.forEach((fr, i) => {
       const o = this.ctx.createOscillator();
@@ -191,7 +201,7 @@ export class Synth {
 
   click() {
     if (!this.ok) return;
-    const t = this.ctx.currentTime;
+    const t = this.now();
     const o = this.ctx.createOscillator();
     o.frequency.value = 1200;
     o.start(t); o.stop(t + 0.04);

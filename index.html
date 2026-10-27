@@ -84,8 +84,16 @@ a { color: var(--gold); }
 #p-you { bottom: calc(12px + var(--safe-b)); left: 50%; transform: translateX(-50%); }
 .thinking::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4) infinite; }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
-#hud-actions { position: absolute; right: calc(10px + var(--safe-r)); bottom: calc(12px + var(--safe-b)); display: flex; gap: 8px; }
+/* Above p3p2's multiplayer button, which has the corner: it is one line high (about 34 px), whatever its width. */
+#hud-actions { position: absolute; right: calc(10px + var(--safe-r)); bottom: calc(58px + var(--safe-b)); display: flex; gap: 8px; }
+/* p3p2 puts its button 12 px from the corner; a notch or a home bar takes more than that. */
+p3p2-panel { right: calc(12px + var(--safe-r)) !important; bottom: calc(12px + var(--safe-b)) !important; }
 #hud-actions-top { position: absolute; right: calc(10px + var(--safe-r)); top: calc(10px + var(--safe-t)); display: flex; gap: 8px; }
+/* In a room, bottom left above the version: a watcher's place in line, or who plays next. */
+#room-note { position: absolute; left: calc(10px + var(--safe-l)); bottom: calc(24px + var(--safe-b)); max-width: calc(50% - 96px);
+  padding: 5px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; color: var(--muted);
+  pointer-events: none !important; }
+@media (orientation: landscape) and (max-height: 640px), (min-aspect-ratio: 13/10) { #room-note { max-width: 40%; } }
 #banner { position: absolute; left: 50%; top: 22%; transform: translate(-50%, -50%) scale(.9); padding: 10px 22px; border-radius: 40px;
   background: rgba(150, 30, 40, .82); color: #fff; font-weight: 800; letter-spacing: .08em; font-size: 20px;
   opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none !important; text-transform: uppercase; }
@@ -163,9 +171,9 @@ a { color: var(--gold); }
     <div class="player" id="p-ai"><span class="swatch b"></span><div class="col"><span class="name">AI</span><span class="sub" id="ai-status">Adaptive</span></div><div class="caps" id="caps-ai"></div></div>
     <div class="player" id="p-you"><span class="swatch w"></span><div class="col"><span class="name">You</span><span class="sub" id="you-status">Your move</span></div><div class="caps" id="caps-you"></div></div>
     <div id="hud-actions">
-      <button id="btn-people" class="icon-btn" aria-label="Play with friends" title="Play with friends">👥</button>
       <button id="btn-view" class="icon-btn" aria-label="Reset view" title="Reset view">⌖</button>
     </div>
+    <div id="room-note" hidden></div>
     <div id="banner">Check</div>
     <input id="san-input" hidden placeholder="e.g. Nf3" aria-label="Type a move" autocomplete="off" autocapitalize="off" spellcheck="false" />
   </div>

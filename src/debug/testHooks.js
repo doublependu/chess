@@ -22,6 +22,8 @@ export function installTestHooks({ stage, ctrl, ui, info, settings }) {
     // Every frame drawn at time `t` (null: the clock runs again), for screenshots that hold still.
     holdClock: (t) => { stage.clock = t; stage.requestRender(); },
     outlineStats: async (opts) => (await import('./outlineProbe.js')).outlineStats(stage, opts),
+    // The film script's hooks (playtest/film.mjs): window.__filmApp once loaded.
+    film: async () => { (await import('./film.js')).install({ stage, ctrl }); return true; },
     slowFrames: () => (stage.slowLog ||= []),
     // GPU time (ms) of one full render, via EXT_disjoint_timer_query_webgl2 when available.
     gpuTime: async (samples = 20) => {

@@ -18,7 +18,8 @@
     "perf:fps": "node scripts/perf-fps.mjs",
     "playtest": "node playtest/play-ui.mjs",
     "playtest:balance": "node playtest/sim-balance.mjs",
-    "playtest:room": "node playtest/play-room.mjs"
+    "playtest:room": "node playtest/play-room.mjs",
+    "film": "node playtest/film.mjs"
   },
   "dependencies": {
     "@dgreenheck/three-pinata": "^2.0.1",

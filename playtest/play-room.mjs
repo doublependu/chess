@@ -1,6 +1,7 @@
-// Chess with a friend, played for real: the production build, a p3p2 server, and three people in one room. A host on
-// a desktop (white), a guest on a phone (black, by touch), and a watcher, who all come in by the room's invite link
-// from the server's portal. Writes a report and videos to
+// Chess with friends, played for real: the production build, a p3p2 server, and four people in one room. A host on
+// a desktop (white), a guest on a phone (black, by touch), and two more who find both seats taken: one gets in line,
+// one only watches. They all come in by the room's invite link from the server's portal, and take turns: the loser
+// goes to the back of the line, somebody who is not there is skipped. Writes a report and videos to
 // playtest-output/room-* (gitignored).
 //
 // Needs a p3p2 server. By default one is started from the p3p2 checkout next to this one (../p3p2), in memory:
@@ -9,9 +10,8 @@
 //   P3P2_OWNER_PASSWORD=… node playtest/play-room.mjs --server http://localhost:8080   # one already running
 //   node playtest/play-room.mjs --lag                        # through p3p2's lag proxy: 150 ms ± 50 each way, one cut
 //   node playtest/play-room.mjs --plies 30 --headed --no-video
-import { spawn } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { p3p2Server, lagProxy, createRoom, roomOf, stopAll } from './rooms.mjs';
 import { parseArgs, outDir, startServer, launch, MOBILE, watchErrors, openGame, playMove, tapSquare } from './lib.mjs';
 import { PERSONAS, PersonaPlayer } from './personas.js';
 import { mulberry32 } from '../src/ai/strength.js';
@@ -26,80 +26,6 @@ const check = (name, ok, extra = {}) => {
   console.log(`${ok ? '✓' : '✗'} ${name}${Object.keys(extra).length ? ' ' + JSON.stringify(extra).slice(0, 200) : ''}`);
   return !!ok;
 };
-const children = [];
-const stopAll = () => { for (const c of children) c.kill('SIGTERM'); };
-process.once('exit', stopAll);
-
-// ---------------------------------------------------------------- the p3p2 server (and the lag proxy)
-
-async function waitFor(url, ms = 30000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try { if ((await fetch(url)).ok) return; } catch { /* not yet */ }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`${url} did not answer in ${ms / 1000} s`);
-}
-
-async function p3p2Server() {
-  if (args.server) {
-    const password = process.env.P3P2_OWNER_PASSWORD;
-    if (!password) throw new Error('--server needs the owner password in P3P2_OWNER_PASSWORD');
-    return { url: String(args.server).replace(/\/$/, ''), password, dir: args.p3p2 ? resolve(String(args.p3p2)) : null };
-  }
-  const dir = resolve(String(args.p3p2));
-  const main = join(dir, 'server', 'src', 'main.ts');
-  if (!existsSync(main)) throw new Error(`No p3p2 checkout at ${dir} (give one with --p3p2, or a running server with --server)`);
-  const port = args.port;
-  const password = 'room-playtest-' + Math.random().toString(36).slice(2, 10);
-  const child = spawn(process.execPath, [main], {
-    cwd: dir,
-    env: {
-      ...process.env, P3P2_PORT: String(port), P3P2_HOST: '127.0.0.1', P3P2_PUBLIC_URL: `http://127.0.0.1:${port}`,
-      P3P2_DATA_DIR: ':memory:', P3P2_OWNER_PASSWORD: password, P3P2_LOG_LEVEL: 'warn',
-    },
-    stdio: ['ignore', 'ignore', 'inherit'],
-  });
-  children.push(child);
-  await waitFor(`http://127.0.0.1:${port}/healthz`);
-  return { url: `http://127.0.0.1:${port}`, password, dir };
-}
-
-async function lagProxy(server) {
-  if (!server.dir) throw new Error('--lag needs a p3p2 checkout (--p3p2) for its lag proxy');
-  const listen = args.port + 1;
-  const to = new URL(server.url);
-  const child = spawn(process.execPath, [
-    join(server.dir, 'e2e', 'tools', 'lag-proxy.ts'), '--listen', String(listen), '--to', `${to.hostname}:${to.port}`,
-    '--latency', '150', '--jitter', '50', '--drop-every', '45',
-  ], { cwd: server.dir, stdio: ['ignore', 'ignore', 'inherit'] });
-  children.push(child);
-  await waitFor(`http://127.0.0.1:${listen}/healthz`);
-  return listen;
-}
-
-/** The owner's side: logs in to the portal and makes a room for the game's address. Returns its invite link. */
-async function createRoom(browser, server, gameUrl) {
-  const ctx = await browser.newContext();
-  const portal = await ctx.newPage();
-  // Not the server's address: once a room is on its front page, that is the front page.
-  await portal.goto(`${server.url}/login`);
-  await portal.getByLabel('Password').fill(server.password);
-  await portal.getByRole('button', { name: 'Log in' }).click();
-  await portal.getByLabel('Game URL').fill(gameUrl);
-  await portal.getByLabel('Room name').fill('Sky Arena playtest');
-  await portal.getByRole('button', { name: 'Create room' }).click();
-  await portal.getByRole('heading', { name: 'Sky Arena playtest' }).waitFor();
-  const link = portal.getByLabel('Invite link', { exact: true });
-  // A server before 0.2 makes no invite with the room: the owner creates it.
-  if (!(await link.isVisible())) await portal.getByRole('button', { name: 'Create invite' }).click();
-  const invite = await link.inputValue();
-  await ctx.close();
-  return invite;
-}
-
-/** What an invite carries: `?room=<server>/<code>`. */
-const roomOf = (invite) => new URL(invite).searchParams.get('room');
 /** The same invite through another port of its server: the lag proxy's. */
 const through = (invite, port) => invite.replace(/([?&]room=[^&#]*:)\d+\//, `$1${port}/`);
 
@@ -145,9 +71,23 @@ async function agree(people, ms = 15000, expected = () => true) {
 }
 
 async function closePanel(p) {
-  const close = p.page.getByRole('button', { name: 'Close', exact: true });
+  const close = p.page.locator('p3p2-panel').getByRole('button', { name: 'Close', exact: true });
   if (await close.isVisible().catch(() => false)) await close.click();
 }
+
+/** p3p2's own multiplayer button, bottom right (the stand-in before the panel's code is loaded, or the panel's). */
+const p3p2Button = (p) => p.page.locator('p3p2-panel button[aria-label^="Multiplayer"]').filter({ visible: true }).first();
+
+/** "Do you want to play or just keep watching?": answers it. */
+async function answer(p, play) {
+  const b = p.page.getByRole('button', { name: play ? /Play: get in line/ : /^👁 Just watch$/ });
+  await b.waitFor({ timeout: 10000 });
+  await b.click();
+}
+
+/** The waits in a room, short enough for a test: the next game, and skipping somebody who is not there. */
+const TIMERS = { next: 3000, skip: 3000, replace: 30000 };
+const shortTimers = (p) => p.page.evaluate((t) => window.__test.room.timers(t), TIMERS);
 
 async function openFromInvite(p, invite) {
   const u = new URL(invite);
@@ -192,17 +132,21 @@ const game = await startServer({ url: args.url, build: args.build !== false && !
 const browser = await launch({ headed: args.headed });
 const report = { started: new Date().toISOString(), args, checks, issues, moves: [] };
 let people = [];
+/** Everybody who came, for the report: `people` loses whoever closes their page. */
+const everybody = [];
 try {
-  const server = await p3p2Server();
+  const server = await p3p2Server({ server: args.server, p3p2: args.p3p2, port: args.port });
   const gameUrl = game.url;
   let invite = await createRoom(browser, server, gameUrl);
-  if (args.lag) invite = through(invite, await lagProxy(server));
+  if (args.lag) invite = through(invite, await lagProxy(server, args.port + 1));
   check('the portal made a room for the game, and its invite', !!roomOf(invite), { invite });
 
   const ada = await person(browser, 'desktop', 'Ada');
   const grace = await person(browser, 'pixel5', 'Grace');
   const lin = await person(browser, 'desktop', 'Lin');
-  people = [ada, grace, lin];
+  const mo = await person(browser, 'desktop', 'Mo');
+  people = [ada, grace, lin, mo];
+  everybody.push(...people);
 
   // Ada plays the AI first, so there is an autosave to come back to after the room.
   await openGame(ada.page, gameUrl, { settings: SETTINGS });
@@ -219,19 +163,39 @@ try {
   const adaRoom = await until(async () => { const r = await room(ada); return r && r.seat === 0 ? r : null; }, 15000);
   check('the host takes white', adaRoom?.seat === 0, { invite });
   check('in a room, the checkpoint buttons go', await ada.page.locator('#hud-actions-top').isHidden());
-  await ada.page.click('#btn-people');
+  await p3p2Button(ada).click();
   const passOn = await ada.page.getByLabel('Invite link', { exact: true }).inputValue();
-  check("the 👥 panel passes on the room's invite", roomOf(passOn) === roomOf(invite), { passOn });
+  check("p3p2's own button opens the panel, which passes on the room's invite", roomOf(passOn) === roomOf(invite), { passOn });
   await closePanel(ada);
+  await shortTimers(ada);
 
   await openFromInvite(grace, invite);
   const graceRoom = await until(async () => { const r = await room(grace); return r && r.seat === 1 ? r : null; }, 15000);
   check('the guest from the invite takes black (on a phone)', graceRoom?.seat === 1);
+  await shortTimers(grace);
+  // On the phone, in a room (the button shows a head count now): still in its corner, clear of ⌖ and the plates.
+  const corner = await grace.page.evaluate(() => {
+    const r = (el) => el && el.getBoundingClientRect();
+    const b = r(document.querySelector('p3p2-panel')), clear = ['btn-view', 'p-you', 'p-ai', 'room-note'].map((id) => r(document.getElementById(id)));
+    const hit = clear.some((c) => c && c.width && b.x < c.right && c.x < b.right && b.y < c.bottom && c.y < b.bottom);
+    return { inside: b.right <= innerWidth && b.bottom <= innerHeight && b.width > 0, hit };
+  });
+  check("in a room, on the phone, p3p2's button is in its corner and clear of the HUD", corner.inside && !corner.hit, corner);
+
+  // Lin finds both seats taken, is asked, and gets in line; Mo only watches.
   await openFromInvite(lin, invite);
-  const linRoom = await until(() => room(lin), 15000);
-  check('the third one watches', linRoom?.seat === -1);
+  await answer(lin, true);
+  const linRoom = await until(async () => { const r = await room(lin); return r && r.place === 0 ? r : null; }, 15000);
+  check('the third one is asked "play or watch?", and gets in line', linRoom?.seat === -1 && linRoom?.place === 0, linRoom ? { line: linRoom.line } : {});
+  await shortTimers(lin);
+  await openFromInvite(mo, invite);
+  await answer(mo, false);
+  const moRoom = await until(() => room(mo), 15000);
+  check('the fourth one chooses to watch: not in line', moRoom?.seat === -1 && moRoom?.place === -1 && moRoom.line.length === 1);
+  await shortTimers(mo);
+  check("the watcher's note on the HUD says who plays next", /Watching · Next: Lin/.test(await mo.page.locator('#room-note').textContent()));
   const agreed0 = await agree(people);
-  check('all three pages start from the same table', !!agreed0, { fingerprint: agreed0?.[0].room.fingerprint });
+  check('all four pages start from the same table', !!agreed0, { fingerprint: agreed0?.[0].room.fingerprint });
   check('the plates name the players', (await grace.page.locator('#p-you .name').textContent()).includes('Grace') && (await grace.page.locator('#p-ai .name').textContent()).includes('Ada'));
 
   // Out of turn, and watching, a tap does nothing. White is to move: Grace and Lin try.
@@ -242,7 +206,9 @@ try {
 
   // The game: a club player on each side, and every page agreeing after every move.
   const rng = mulberry32(args.seed);
-  const players = [new PersonaPlayer(PERSONAS.club, mulberry32(args.seed + 1)), new PersonaPlayer(PERSONAS.casual, mulberry32(args.seed + 2)), null];
+  const players = [new PersonaPlayer(PERSONAS.club, mulberry32(args.seed + 1)), new PersonaPlayer(PERSONAS.casual, mulberry32(args.seed + 2)), null, null];
+  /** The persona of whoever sits in seat c: Ada's and Grace's play on whichever page sits there. */
+  const byPage = (all) => people.map((p, k) => (all[k].room.seat === -1 ? null : players[all[k].room.seat]));
   let sawCapture = false, captured = false, disagreed = 0;
   for (let k = 0; k < args.plies; k++) {
     const r = await playOne(people, players, rng);
@@ -265,11 +231,20 @@ try {
       const back = await until(async () => { try { const r2 = await room(grace); return r2 && r2.seat === 1 ? r2 : null; } catch { return null; } }, 20000);
       const same = await agree(people);
       check('after a reload the guest is back in the same seat and game', back?.seat === 1 && !!same, { ply: r.ply });
+      await shortTimers(grace);
     }
   }
   check(`${report.moves.length} plies played, every page agreeing after each`, report.moves.length >= Math.min(args.plies, 10) && !disagreed, { plies: report.moves.length });
   if (captured) check('a capture shattered on both players\' pages', !!sawCapture, sawCapture || { captured });
   else console.log('· no capture in these plies: the shattering was not checked');
+
+  // Mo reloads: having said "just watch", Mo is not asked again.
+  await mo.page.reload();
+  await until(async () => { try { return await room(mo); } catch { return null; } }, 20000);
+  await closePanel(mo);
+  await mo.page.waitForTimeout(1500);
+  check('after a reload, "just watch" is not asked again', (await mo.page.evaluate(() => window.__test.overlay())) !== 'ask');
+  await shortTimers(mo);
 
   // A draw: Ada offers; Grace says no to the question, thinks again, and accepts from ☰.
   let s = await st(ada);
@@ -290,37 +265,84 @@ try {
     }
     check('a draw offered on one page is accepted from the menu on the other', drawn && drawn.every((x) => x.result.status === 'agreement'),
       drawn ? {} : { pages: await Promise.all(people.map(async (p) => { const x = await st(p); return { who: p.name, over: x.over, phase: x.phase, overlay: x.overlay, offer: x.room?.offer, ply: x.ply }; })) });
+  } else {
+    issues.push({ type: 'note', text: `the game ended by itself (${s.result.status}) before the draw offer` });
   }
 
-  // The next game: colours change.
+  // Somebody waits, so the next game starts by itself. After a draw between two who sat down together, white (Ada)
+  // goes to the back of the line; Grace stays and changes colour, and Lin comes in.
   const n1 = (await room(ada)).n;
-  await ada.page.getByRole('button', { name: /Rematch|Play again/ }).waitFor({ timeout: 10000 });
-  await ada.page.getByRole('button', { name: /Rematch|Play again/ }).click();
-  const next = await until(async () => { const r = await room(ada); return r && r.n === n1 + 1 ? r : null; }, 10000);
-  await until(async () => (await room(grace)).n === n1 + 1, 10000);
+  const told = await until(async () => /Next game: .*to the back of the line/.test(await ada.page.locator('.overlay[data-name="over"]').textContent().catch(() => '')), 10000);
+  check('the game-over box says who plays next, and who goes to the line', !!told);
+  const game2 = await agree(people, 20000, (all) => all.every((x) => x.room.n === n1 + 1));
+  const r2 = game2 && Object.fromEntries(people.map((p, k) => [p.name, game2[k].room]));
+  const expect2 = s.over ? null : { white: 'Grace', black: 'Lin', line: ['Ada'] };
+  check('with somebody waiting, the next game starts by itself; the loser goes to the back of the line, the winner stays',
+    !!r2 && (!expect2 || (r2.Grace.seat === 0 && r2.Lin.seat === 1 && r2.Ada.place === 0 && r2.Ada.line.join() === 'Ada')),
+    r2 ? { seats: r2.Ada.names, line: r2.Ada.line } : {});
   for (const p of people) await p.page.getByRole('button', { name: /View board/ }).click({ timeout: 2000 }).catch(() => {});
-  check('the next game swaps colours', next?.seat === 1 && (await room(grace)).seat === 0);
 
-  // Grace (now white) plays two plies, then resigns.
-  for (let k = 0; k < 2; k++) { const r = await playOne(people, [players[0], players[1], null], rng); if (r) report.moves.push(r.uci); }
-  await grace.page.click('#btn-menu');
-  await grace.page.getByRole('button', { name: /Resign/ }).click();
-  await grace.page.getByRole('button', { name: 'Resign', exact: true }).click();
+  // Game 2: two plies, then black resigns: black loses, white stays, and Ada (first in line) starts the next one herself.
+  for (let k = 0; k < 2; k++) {
+    const all = await agree(people);
+    const r = all && await playOne(people, byPage(all), rng);
+    if (r) report.moves.push(r.uci);
+  }
+  const black2 = people.find((p) => r2 && r2[p.name].seat === 1) || lin;
+  const white2 = people.find((p) => r2 && r2[p.name].seat === 0) || grace;
+  // This time nobody's clock starts it: the first in line does.
+  for (const p of people) await p.page.evaluate(() => window.__test.room.timers({ next: 60000 }));
+  await black2.page.click('#btn-menu');
+  await black2.page.getByRole('button', { name: /Resign/ }).click();
+  await black2.page.getByRole('button', { name: 'Resign', exact: true }).click();
   const resigned = await agree(people, 15000, (all) => all.every((x) => x.over));
-  check('resigning ends the game on every page', resigned && resigned.every((x) => x.result.status === 'resignation' && x.result.winner === 1));
+  check('resigning ends the game on every page', resigned && resigned.every((x) => x.result.status === 'resignation' && x.result.winner === 0));
+  const start = ada.page.getByRole('button', { name: /Start now/ });
+  const canStart = await start.waitFor({ timeout: 10000 }).then(() => true, () => false);
+  check('the first in line may start the next game ("Start now")', canStart);
+  if (canStart) await start.click();
+  const game3 = await agree(people, 15000, (all) => all.every((x) => x.room.n === n1 + 2));
+  const r3 = game3 && Object.fromEntries(people.map((p, k) => [p.name, game3[k].room]));
+  check('the winner stays and changes colour; the newcomer plays the other side; the loser is at the back',
+    !!r3 && r3.Ada.seat === 0 && r3[white2.name].seat === 1 && r3[black2.name].place === 0, r3 ? { names: r3.Ada.names, line: r3.Ada.line } : {});
   for (const p of people) await p.page.getByRole('button', { name: /View board/ }).click({ timeout: 2000 }).catch(() => {});
+  for (const p of people) await shortTimers(p);
 
-  // Ada gives up her seat, and Lin takes it.
+  // Mo changes their mind and gets in line from ☰: second, behind the loser.
+  await mo.page.click('#btn-menu');
+  await mo.page.getByRole('button', { name: /Get in line/ }).click();
+  const moLine = await until(async () => { const r = await room(mo); return r && r.place === 1 ? r : null; }, 10000);
+  check('a watcher gets in line from the menu, at the back', !!moLine, moLine ? { line: moLine.line } : {});
+  check("the note on the HUD shows the watcher's place", /#2 in line/.test(await mo.page.locator('#room-note').textContent()));
+
+  // Game 3 has not begun. Its black player closes the page: after a while the other player (Ada) may skip them, and
+  // the first in line sits down for the same game.
+  const gone = people.find((p) => r3 && r3[p.name].seat === 1) || white2;
+  const firstInLine = people.find((p) => r3 && r3[p.name].place === 0) || black2;
+  await gone.ctx.close();
+  people = people.filter((p) => p !== gone);
+  const skipBtn = ada.page.getByRole('button', { name: new RegExp(`Skip ${gone.name}`) });
+  const offered = await until(async () => {
+    await ada.page.click('#btn-menu');
+    if (await skipBtn.isVisible().catch(() => false)) return true;
+    await ada.page.keyboard.press('Escape');
+    return false;
+  }, 20000, 1000);
+  check('a player who is not there may be skipped by the other player, once somebody waits', !!offered);
+  if (offered) await skipBtn.click();
+  const skipped = await agree(people, 15000, (all) => all.every((x) => x.room.seats[1] && x.room.names[1] !== gone.name));
+  const rs = skipped && Object.fromEntries(people.map((p, k) => [p.name, skipped[k].room]));
+  check('the first in line takes the seat of the one skipped, who is not put in line',
+    !!rs && rs[firstInLine.name].seat === 1 && !rs.Ada.line.includes(gone.name), rs ? { names: rs.Ada.names, line: rs.Ada.line } : {});
+
+  // Ada gives up her seat before a move: Mo, first in line now, takes it at once.
   await ada.page.click('#btn-menu');
   await ada.page.getByRole('button', { name: /Give up my seat/ }).click();
-  await until(async () => (await room(lin)).seats.includes(null), 10000);
-  await lin.page.click('#btn-menu');
-  await lin.page.getByRole('button', { name: /Take the free seat/ }).click();
-  const seated = await until(async () => { const r = await room(lin); return r && r.seat !== -1 ? r : null; }, 10000);
-  check('a watcher takes a seat given up', !!seated, { seat: seated?.seat });
+  const seated = await until(async () => { const r = await room(mo); return r && r.seat !== -1 ? r : null; }, 10000);
+  check('a seat given up goes to the first in line', !!seated, { seat: seated?.seat });
 
   // Ada leaves: the title is back, with her game against the AI.
-  await ada.page.click('#btn-people');
+  await p3p2Button(ada).click();
   await ada.page.getByRole('button', { name: 'Leave', exact: true }).click();
   await ada.page.locator('.overlay[data-name="title"]').waitFor({ timeout: 10000 });
   const cont = ada.page.getByRole('button', { name: /Continue/ });
@@ -331,7 +353,7 @@ try {
 } catch (e) {
   check('the run finished', false, { crash: String(e?.stack || e).slice(0, 1500) });
 } finally {
-  for (const p of people) {
+  for (const p of everybody) {
     report[p.name] = { errors: p.errors };
     await p.ctx.close().catch(() => {});
   }
@@ -340,7 +362,7 @@ try {
   stopAll();
 }
 
-const errors = people.flatMap((p) => p.errors.map((e) => ({ who: p.name, ...e })));
+const errors = everybody.flatMap((p) => p.errors.map((e) => ({ who: p.name, ...e })));
 report.finished = new Date().toISOString();
 writeFileSync(`${DIR}/report.json`, JSON.stringify(report, null, 2));
 const notes = issues.filter((i) => i.type === 'note');

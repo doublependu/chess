@@ -8,6 +8,14 @@ export const MAIZE_URL = 'https://maize.live';
 /** How to make a room for playing with friends. */
 export const P3P2_URL = 'https://p3p2.me/#start';
 
+/**
+ * The p3p2 mark (three players, me in front), as p3p2's own multiplayer button draws it: the menu's way into a room
+ * looks like the corner's. From @p3p2/client, MIT License, Copyright (c) 2026 Man & Bot.
+ */
+const P3P2_MARK = '<svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" style="display:block">'
+  + '<path fill="currentColor" opacity=".55" d="M.6 7.2a1.9 1.9 0 0 0 3.8 0a1.9 1.9 0 0 0-3.8 0M11.6 7.2a1.9 1.9 0 0 0 3.8 0a1.9 1.9 0 0 0-3.8 0M-.8 13.2A3.3 3.3 0 0 1 5.12 11.2A5.6 5.6 0 0 0 3.15 13.2zM16.8 13.2A3.3 3.3 0 0 0 10.88 11.2A5.6 5.6 0 0 1 12.85 13.2z"/>'
+  + '<path fill="currentColor" d="M5.4 7.7a2.6 2.6 0 0 0 5.2 0a2.6 2.6 0 0 0-5.2 0M3.4 16a4.6 4.6 0 0 1 9.2 0z"/></svg>';
+
 const link = (href, text) => h('a', { href, target: '_blank', rel: 'noopener' }, text);
 
 /** Tiny hyperscript helper. */
@@ -40,7 +48,7 @@ export class UI {
     this.handlers = {};
     // The loading screen is removed after boot, so keep a copy of its GitHub corner.
     this.cornerTemplate = document.querySelector('#loading .github-corner')?.cloneNode(true) || null;
-    for (const [id, action] of [['btn-menu', 'pause'], ['btn-save', 'save'], ['btn-load', 'load'], ['btn-view', 'resetView'], ['btn-people', 'people']]) {
+    for (const [id, action] of [['btn-menu', 'pause'], ['btn-save', 'save'], ['btn-load', 'load'], ['btn-view', 'resetView']]) {
       $(id).addEventListener('click', () => { this.audio?.click(); this.emit(action); });
     }
     const san = $('san-input');
@@ -108,10 +116,10 @@ export class UI {
     return h('button', { class: 'btn ' + cls, onclick: () => { this.audio?.click(); onClick(); }, ...attrs }, label);
   }
 
-  /** "Play with a friend", and right under it where to get a room for it. */
+  /** "Play with a friend", which opens p3p2's panel, and right under it where to get a room for it. */
   friendButton() {
     return [
-      this.btn('👥 Play with a friend', () => this.emit('people')),
+      this.btn([h('span', { html: P3P2_MARK }), 'Play with a friend'], () => this.emit('people')),
       h('p', { class: 'hint' }, 'Need a room? Make one free at ', link(P3P2_URL, 'p3p2.me ↗')),
     ];
   }
@@ -290,32 +298,73 @@ export class UI {
     this.show('over', panel, { corner: true });
   }
 
-  /** The game is over in a room: no rating, no checkpoints; the next game, with colours changed, for a player. */
-  showRoomGameOver({ title, reason, glyph, win, onRematch }) {
+  /**
+   * The game is over in a room: no rating, no checkpoints. With nobody waiting, the next game, with colours changed,
+   * for a player. With somebody waiting (`next`), who plays it, and a countdown to it.
+   */
+  showRoomGameOver({ title, reason, glyph, win, onRematch, next }) {
     this.close('over');
+    const count = next ? h('p', { class: 'fineprint' }) : null;
     const panel = h('div', { class: 'panel', style: 'text-align:center' },
       h('div', { class: 'result-big' }, glyph),
       h('h2', {}, title),
       h('p', { class: 'lead' }, reason),
+      next ? h('p', { class: 'lead', style: 'color:var(--text)' }, next.text) : null,
       h('div', { class: 'menu' },
         onRematch ? this.btn(win ? 'Play again' : 'Rematch', () => { this.close('over'); onRematch(); }, 'primary') : null,
-        this.btn('👁 View board', () => this.close('over'), onRematch ? '' : 'primary'),
+        next?.onStart ? this.btn('▶ Start now', () => { this.close('over'); next.onStart(); }, 'primary') : null,
+        next?.onWatch ? this.btn('👁 Just watch instead', () => { this.close('over'); next.onWatch(); }) : null,
+        this.btn('👁 View board', () => this.close('over'), onRematch || next?.onStart ? '' : 'primary'),
       ),
+      count,
       onRematch ? h('p', { class: 'fineprint' }, 'The next game starts when one of you asks; you change colours.') : null,
     );
-    this.show('over', panel, { corner: true });
+    const ov = this.show('over', panel, { corner: true });
+    if (count) {
+      const tick = () => {
+        if (!ov.isConnected) return;
+        const s = Math.ceil((next.startsAt - Date.now()) / 1000);
+        count.textContent = s > 0 ? `Starts in ${s} s` : 'Starting…';
+        if (s > 0) setTimeout(tick, 250);
+      };
+      tick();
+    }
+  }
+
+  /** Both seats are taken in a room: "Do you want to play or just keep watching?" Resolves to true for playing. */
+  askToPlay({ players, line }) {
+    return new Promise((resolve) => {
+      const done = (v) => { this.close('ask'); resolve(v); };
+      const place = line.length + 1;
+      const panel = h('div', { class: 'panel', style: 'text-align:center' },
+        h('h2', {}, 'Both seats are taken'),
+        h('p', { class: 'lead' }, players.length === 2 ? `${players[0]} and ${players[1]} are playing.` : 'A game is on.',
+          line.length ? ` Waiting: ${line.join(', ')}.` : ''),
+        h('p', { class: 'lead', style: 'font-size:17px;color:var(--text)' }, 'Do you want to play or just keep watching?'),
+        h('div', { class: 'menu' },
+          this.btn(`🙋 Play: get in line (#${place})`, () => done(true), 'primary'),
+          this.btn('👁 Just watch', () => done(false)),
+        ),
+        h('p', { class: 'fineprint' }, 'Winner stays on: after each game the loser goes to the back of the line, and the next one sits down. You can change your mind from ☰.'),
+      );
+      this.show('ask', panel, { dismiss: () => done(false) });
+    });
   }
 
   /** The menu in a room, where Esc and ☰ lead. */
-  showRoomMenu({ seated, canOffer, canAccept, canResign, canNew, canSit, onOffer, onAccept, onResign, onNew, onStand, onSit }) {
+  showRoomMenu({ seated, canOffer, canAccept, canResign, canNew, canSit, onOffer, onAccept, onResign, onNew, onStand, onSit, line = [], canLine, inLine, onLine, onUnline, skips = [] }) {
     this.close('pause');
     const act = (fn) => () => { this.close('pause'); fn(); };
     const panel = h('div', { class: 'panel' },
       h('h2', {}, 'Playing with friends'),
       h('p', { class: 'lead' }, seated ? 'The room keeps the game: close the page, and pick it up when you like.' : 'You are watching. The players are on the name plates.'),
+      line.length ? h('p', { class: 'lead', 'data-line': '' }, 'In line: ', line.map((n, i) => `${i + 1}. ${n}`).join(' · ')) : null,
       h('div', { class: 'menu' },
         this.btn('▶ Back to the board', () => this.emit('resume'), 'primary'),
         canSit ? this.btn('🪑 Take the free seat', act(onSit)) : null,
+        canLine ? this.btn('🙋 Get in line to play', act(onLine)) : null,
+        inLine ? this.btn('✋ Leave the line', act(onUnline)) : null,
+        ...skips.map((s) => this.btn(s.label, act(s.run))),
         canOffer ? this.btn('🤝 Offer a draw', act(onOffer)) : null,
         canAccept ? this.btn('🤝 Accept the draw', act(onAccept)) : null,
         canNew ? this.btn('♻ Next game', act(onNew)) : null,
@@ -323,7 +372,7 @@ export class UI {
         seated ? this.btn('🚪 Give up my seat', act(onStand)) : null,
         this.btn('⚙ Settings', () => this.emit('settings')),
       ),
-      h('p', { class: 'fineprint' }, 'The 👥 button, bottom right, is the room: who is here, the invite, chat, and leaving.'),
+      h('p', { class: 'fineprint' }, 'The p3p2 button, bottom right, is the room: who is here, the invite, chat, and leaving.'),
       h('p', { class: 'fineprint' }, link(P3P2_URL, 'How rooms work: p3p2.me'), ' · ', link(MAIZE_URL, 'More games on Maize.Live')),
     );
     this.show('pause', panel, { corner: true, dismiss: () => this.emit('resume') });
@@ -365,6 +414,13 @@ export class UI {
 
   /** In a room there are no checkpoints: their two buttons go. */
   setRoomMode(on) { $('hud-actions-top').hidden = on; }
+
+  /** A line about the room's line on the HUD ("Watching · #2 in line", "Next: Carol"), or null for none. */
+  setRoomNote(text) {
+    const el = $('room-note');
+    if (el.textContent !== (text || '')) el.textContent = text || '';
+    el.hidden = !text;
+  }
 
   toast(text, ms = 2600) {
     const el = h('div', {}, text);

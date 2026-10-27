@@ -43,6 +43,11 @@ export class Controller {
     this.sent = null;
     /** Which of the table's games the board shows. */
     this.roomN = 0;
+    /** The game whose end started the countdown to the next one, and when that one starts (ms). */
+    this.nextN = 0;
+    this.nextAt = 0;
+    /** Players already pointed out as skippable, as `${game}:${pid}`. */
+    this.skipNoted = new Set();
     stage.views.reset(this.game.pieces());
   }
 
@@ -617,6 +622,9 @@ export class Controller {
     this.room = null;
     this.sent = null;
     clearTimeout(this.sentTimer);
+    clearTimeout(this.nextTimer);
+    this.nextN = 0;
+    this.ui.setRoomNote(null);
     this.token++;
     this.stage.animator.finishAll();
     this.clearFinale();
@@ -644,6 +652,7 @@ export class Controller {
     this.select(null);
     this.sent = null;
     clearTimeout(this.sentTimer);
+    this.skipNoted = new Set();
     this.roomN = t.n;
     this.game = t.copy();
     const seat = this.mySeat;
@@ -658,6 +667,57 @@ export class Controller {
     this.log('table', { n: t.n, ply: t.moves.length });
     if (this.game.over) { this.phase = 'over'; this.ui.setTurn(false, { over: true }); this.roomHud(); }
     else this.nextTurn();
+  }
+
+  /** Both seats are taken: "Do you want to play or just keep watching?" Resolves to true for playing. */
+  askToPlay() {
+    const t = this.room.table;
+    return this.ui.askToPlay({ players: t.names.filter(Boolean), line: t.line.map((e) => e.name) });
+  }
+
+  /**
+   * When somebody waits and the game is over, the next one starts by itself after a while: every page that may start
+   * it sends `new` when its own clock says so, and the table takes the first. Once per game.
+   */
+  scheduleNext() {
+    const t = this.room?.table;
+    if (!t || !t.over || !t.moves.length || !t.line.length) return;
+    if (this.nextN === t.n) return;
+    const n = t.n;
+    this.nextN = n;
+    this.nextAt = Date.now() + this.room.timers.next;
+    clearTimeout(this.nextTimer);
+    this.nextTimer = setTimeout(() => {
+      const t2 = this.room?.table;
+      if (!t2 || t2.n !== n || !t2.line.length) return;
+      if (this.mySeat !== -1 || t2.placeOf(this.room.me) === 0) this.room.submit({ t: 'new', n });
+    }, this.room.timers.next);
+  }
+
+  /**
+   * Whether this page may skip the player in seat `c`: somebody waits, they have not been here for long enough, and
+   * this page is the other player or the first in line. A game begun takes longer, and counts as their loss.
+   */
+  skippable(c) {
+    const t = this.room?.table;
+    const pid = t?.seats[c];
+    if (!pid || !t.line.length || pid === this.room.me) return false;
+    if (this.mySeat !== (c ^ 1) && t.placeOf(this.room.me) !== 0) return false;
+    const begun = t.moves.length > 0 && !t.over;
+    return this.room.absentFor(pid) >= (begun ? this.room.timers.replace : this.room.timers.skip);
+  }
+
+  /** Every second in a room: a player who may now be skipped is pointed out, once. */
+  roomTick() {
+    if (!this.room) return;
+    const t = this.room.table;
+    for (const c of [0, 1]) {
+      const key = `${t.n}:${t.seats[c]}`;
+      if (!this.skippable(c) || this.skipNoted.has(key)) continue;
+      this.skipNoted.add(key);
+      this.ui.toast(`${t.names[c]} is not here. You can skip them from ☰`, 5000);
+    }
+    this.roomHud();
   }
 
   /**
@@ -763,6 +823,11 @@ export class Controller {
       return (this.game.turn === c ? (c === seat ? 'Your move' : 'To move') : 'Waiting') + away;
     };
     this.ui.setTurn(this.game.turn === bottom && !this.game.over, { over: this.game.over, youText: status(bottom), aiText: status(top) });
+    // The line, where the plates do not say it: a watcher's place in it, or who plays next.
+    const place = t.placeOf(this.room.me);
+    const next = t.line.length ? `Next: ${t.line[0].name}${t.line.length > 1 ? ` +${t.line.length - 1}` : ''}` : '';
+    this.ui.setRoomNote(seat !== -1 ? next || null : place === 0 ? 'Watching · you play next' : place > 0 ? `Watching · #${place + 1} in line` : `Watching${next ? ' · ' + next : ''}`);
+    this.scheduleNext();
   }
 
   /** The game is over: who won, said from where this page sits, and the next game for whoever is seated. */
@@ -780,10 +845,29 @@ export class Controller {
     const reason = r.winner === null ? reasons[r.status] : `${r.winner === seat ? 'You won' : `${who(r.winner)} won`} ${reasons[r.status]}`;
     this.log('gameOver', { status: r.status, winner: r.winner });
     if (seat !== -1) this.audio.jingle(r.winner === null || r.winner === seat);
+    // Who plays next, when somebody waits: the winner stays, the loser goes to the back of the line.
+    const canStart = seat !== -1 || t.placeOf(this.room.me) === 0;
+    let next = null;
+    // (A game resigned before its first move sends nobody to the line: the same two play on, as with nobody waiting.)
+    if (t.line.length && t.moves.length) {
+      this.scheduleNext();
+      const out = t.leaving();
+      const comer = t.line[0];
+      const vs = out === -1 ? `${who(0)} vs ${who(1)}` : `${who(out ^ 1)} vs ${comer.name}`;
+      const goes = out === -1 ? '' : out === seat ? ' You go to the back of the line.' : ` ${who(out)} goes to the back of the line.`;
+      next = {
+        text: `Next game: ${vs}.${goes}`,
+        startsAt: this.nextAt,
+        onStart: canStart ? () => this.room?.submit({ t: 'new', n: t.n }) : null,
+        // Leaving the seat now, with the game over, costs nothing: the first in line takes it, and nobody goes to the line.
+        onWatch: out !== -1 && out === seat ? () => this.room?.submit({ t: 'stand' }) : null,
+      };
+    }
     this.ui.showRoomGameOver({
       title, reason, win: r.winner === seat,
       glyph: r.winner === null ? '½' : GLYPH[r.winner][6],
-      onRematch: seat === -1 ? null : () => this.room?.submit({ t: 'new', n: t.n }),
+      onRematch: next || seat === -1 ? null : () => this.room?.submit({ t: 'new', n: t.n }),
+      next,
     });
   }
 
@@ -794,15 +878,26 @@ export class Controller {
     const playing = seat !== -1 && !this.game.over;
     const free = t.seats.indexOf(null);
     const standing = t.offer && t.offer.ply === t.moves.length;
+    const place = t.placeOf(this.room.me);
+    const begun = t.moves.length > 0 && !t.over;
     this.ui.showRoomMenu({
       seated: seat !== -1,
+      line: t.line.map((e) => (e.pid === this.room.me ? 'you' : e.name)),
+      canLine: seat === -1 && place === -1 && !(free !== -1 && !t.line.length),
+      inLine: place !== -1,
+      onLine: () => this.room?.line(),
+      onUnline: () => this.room?.unline(),
+      skips: [0, 1].filter((c) => this.skippable(c)).map((c) => ({
+        label: begun ? `⏭ Replace ${t.names[c]} (not here; counts as their loss)` : `⏭ Skip ${t.names[c]} (not here)`,
+        run: () => this.room?.skip(c),
+      })),
       canOffer: playing && !standing,
       // The question about a draw is asked once; an answer lost on the way (or a "Cancel" regretted) is given here.
       canAccept: playing && standing && t.offer.by !== seat,
       onAccept: () => this.room?.submit({ t: 'accept', n: t.n, ply: t.moves.length }),
       canResign: playing,
-      canNew: seat !== -1 && (this.game.over || t.moves.length === 0),
-      canSit: seat === -1 && free !== -1,
+      canNew: (seat !== -1 || place === 0) && (this.game.over || t.moves.length === 0),
+      canSit: seat === -1 && free !== -1 && !t.line.length,
       onOffer: () => this.room?.submit({ t: 'offer', n: t.n, ply: t.moves.length }),
       onResign: async () => { if (await this.ui.confirm('Resign this game?', 'Resign')) this.resign(); },
       onNew: () => this.room?.submit({ t: 'new', n: t.n }),
@@ -834,6 +929,7 @@ export class Controller {
       room: this.room ? {
         seat: this.mySeat, n: this.room.table.n, seats: this.room.table.seats.slice(), names: this.room.table.names.slice(),
         moves: this.room.table.moves.slice(), offer: this.room.table.offer, fingerprint: this.room.table.fingerprint(), sent: this.sent,
+        line: this.room.table.line.map((e) => e.name), place: this.room.table.placeOf(this.room.me), nextAt: this.nextN === this.room.table.n ? this.nextAt : 0,
       } : null,
     };
   }
