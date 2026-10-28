@@ -1,17 +1,18 @@
 // Showcase videos of the game, recorded from the real production build as a person plays it, frame by frame
 // (playtest/film/clock.mjs), and cut for YouTube (16:9, about 4½ min), a YouTube Short (9:16, under a minute) and X
-// (1:1, under a minute, captioned to work muted). Everything goes to playtest-output/film-* (gitignored).
+// (1:1, under a minute, captioned to work muted). Everything goes to playtest-output/film-* (gitignored); the finished
+// videos and the text to post with them are gathered in its upload/ folder.
 //
 // Usage:
 //   npm run film                                    # all three cuts
 //   node playtest/film.mjs --cut short              # one cut
 //   node playtest/film.mjs --cut youtube --reels opera,rewind   # some reels only, to try them
-//   node playtest/film.mjs --url-label chess.example.com --music track.mp3
+//   node playtest/film.mjs --url-label chess.example.com --music track.mp3   # the end card's address (ch0.maize.live)
 //   node playtest/film.mjs --no-build --url http://localhost:5173/
 //
 // The friends reel needs a p3p2 checkout next to this one (../p3p2, or --p3p2 <dir>), as `npm run playtest:room` does.
 // Rendering uses the GPU in a headless browser; --headed shows the windows instead.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { chromium } from '@playwright/test';
 import { parseArgs, outDir, startServer } from './lib.mjs';
 import { PRESETS } from './film/kit.mjs';
@@ -19,7 +20,7 @@ import { REELS } from './film/reels.mjs';
 import { build, thumbnails } from './film/encode.mjs';
 import { stopAll } from './rooms.mjs';
 
-const args = parseArgs({ cut: 'all', reels: null, 'url-label': '', music: null, p3p2: '../p3p2', build: true, url: null, headed: false, port: 4182 });
+const args = parseArgs({ cut: 'all', reels: null, 'url-label': 'ch0.maize.live', music: null, p3p2: '../p3p2', build: true, url: null, headed: false, port: 4182 });
 
 /** Which reels each cut is made of, in order, with their options. */
 export const CUTS = {
@@ -74,48 +75,88 @@ try {
   stopAll();
 }
 
-// ---------------------------------------------------------------- what goes with the videos
+// ---------------------------------------------------------------- the upload folder: the videos and their posts
 
-const url = args['url-label'] ? `https://${String(args['url-label']).replace(/^https?:\/\//, '')}` : '<the game\'s address>';
+const site = String(args['url-label'] || '').replace(/^https?:\/\//, '');
+const url = site ? `https://${site}` : '<the game\'s address>';
 const yt = report.cuts.find((c) => c.name === 'youtube');
-const description = [
-  '# Sky Arena Chess: what goes with the videos', '',
-  '## YouTube', '',
-  'Title ideas:',
-  '- Chess, but the pieces shatter (and time rewinds) | free browser game',
-  '- I made 3D chess where captured pieces shatter and you can rewind time', '',
+const UP = `${DIR}/upload`;
+mkdirSync(UP, { recursive: true });
+// Hard links: the folder takes no more space (a copy where a link can't be made).
+const put = (from, to) => {
+  if (!existsSync(from)) return;
+  rmSync(to, { force: true });
+  try { linkSync(from, to); } catch { copyFileSync(from, to); }
+};
+for (const c of report.cuts) put(c.file, `${UP}/${c.name}.mp4`);
+if (yt) {
+  put(`${DIR}/youtube/youtube.srt`, `${UP}/youtube.srt`);
+  for (const t of yt.thumbnails || []) put(`${DIR}/youtube/${t}`, `${UP}/youtube-${t}`);
+}
+// A paragraph is one line: YouTube and X keep every line break that is pasted.
+const block = (...lines) => ['```', ...lines, '```'];
+const posts = [
+  '# Sky Arena Chess: the posts', '',
+  'The videos are in this folder. What is in a code block is ready to paste.', '',
+  '## YouTube: youtube.mp4', '',
+  'Title (one of):', '',
+  ...block('Chess, but the pieces shatter (and you can rewind time)'), '',
+  ...block('I made 3D chess where captured pieces shatter and time rewinds'), '',
   'Description:', '',
-  '```',
-  'Sky Arena Chess: 3D chess on a floating island, free in your browser. Captured pieces shatter with real physics and the',
-  'wind blows the shards away; checkpoints rewind time, shards and all; the AI estimates your level and aims for a fair',
-  'fight; and friends can play in a room, taking turns: winner stays on.',
-  '',
-  `Play: ${url}`,
-  'Source (GPL-3.0), fork it: https://github.com/doublependu/chess',
-  'More games: https://maize.live',
-  'Multiplayer rooms: https://p3p2.me',
-  '',
-  'The Opera Game (Morphy, Paris 1858) is a replay: the AI is given Black\'s historical moves. The game against the AI',
-  'that follows is not scripted.',
-  '',
-  ...(yt ? ['Chapters:', yt.chapterText] : []),
-  '',
-  '#chess #threejs #webgl #gamedev #indiegame #browsergame',
-  '```', '',
-  'Thumbnails: ' + (yt?.thumbnails?.join(', ') || 'none') + '. Subtitles: youtube.srt.', '',
-  '## YouTube Short', '',
-  'Title: Chess, but the pieces shatter 💥 #chess #shorts', '',
-  `Description: Free in your browser: ${url} · Rewind time, shards and all. #chess #gamedev #threejs`, '',
-  '## X', '',
-  '```',
-  'Chess, but the pieces shatter 💥, time rewinds ⏪, and friends take turns: winner stays on.',
-  '',
-  `Free in your browser: ${url}`,
-  'Open source: https://github.com/doublependu/chess',
-  '#chess #gamedev #threejs',
-  '```', '',
-].join('\n');
-writeFileSync(`${DIR}/description.md`, description);
+  ...block(
+    `Play free in your browser: ${url}`,
+    '',
+    'Sky Arena Chess is 3D chess on a floating island. Captured pieces shatter with real physics, and the wind blows the '
+      + 'shards away. Save a checkpoint and rewind time, shards and all. The AI estimates your level and aims for a fair '
+      + 'fight. Send friends one link to play in a room: whoever is watching gets in line, and the winner stays on.',
+    '',
+    'No install, no sign-up.',
+    '',
+    'The Opera Game (Morphy, Paris 1858) is a replay: the AI is given Black\'s historical moves. The game against the AI '
+      + 'after it is not scripted.',
+    '',
+    ...(yt ? ['Chapters:', yt.chapterText, ''] : []),
+    'Source code (GPL-3.0), fork it: https://github.com/doublependu/chess',
+    'More games: https://maize.live',
+    'Multiplayer rooms: https://p3p2.me',
+    '',
+    '#chess #indiegame #browsergame',
+  ), '',
+  'Tags: chess, 3d chess, browser game, chess game, physics, three.js, webgl, indie game, game dev', '',
+  `Thumbnail: ${(yt?.thumbnails || []).map((t) => `youtube-${t}`).join(' or ') || 'none'}. Subtitles: youtube.srt (English).`, '',
+  '## YouTube Short: short.mp4', '',
+  'Title:', '',
+  ...block('Chess, but the pieces shatter 💥 #shorts'), '',
+  'Description:', '',
+  ...block(
+    `Play free in your browser: ${site || url} (no install, no sign-up)`,
+    '',
+    'The moves are Morphy\'s Opera Game, Paris 1858, replayed. Then a checkpoint, a blunder, and time rewinds.',
+    '',
+    '#chess #gamedev #shorts',
+  ), '',
+  'A link in a Short\'s description can\'t be clicked, so the address is on the end card. Once the long video is up,',
+  'set it as this Short\'s related video.', '',
+  '## X: x.mp4', '',
+  'Post:', '',
+  ...block(
+    'Chess, but captured pieces shatter 💥, you can rewind time ⏪, and friends take turns at the board: winner stays on.',
+    '',
+    `Free in your browser, no sign-up: ${url}`,
+    'Open source: https://github.com/doublependu/chess',
+    '',
+    '#chess #gamedev',
+  ), '',
+  'A reply under it (optional):', '',
+  ...block('Built with three.js and Rapier physics. Multiplayer rooms by https://p3p2.me'), '',
+  'Alt text for the video:', '',
+  ...block(
+    'A 3D chess board on a floating island. A knight takes a queen, and the queen shatters. A player saves a checkpoint, '
+      + 'loses their queen to a blunder, and rewinds time. Then a room with friends: one more joins, finds both seats taken '
+      + 'and gets in line; after the game, the loser leaves the board and the one waiting sits down.',
+  ), '',
+];
+writeFileSync(`${UP}/posts.md`, posts.join('\n'));
 report.finished = new Date().toISOString();
 writeFileSync(`${DIR}/report.json`, JSON.stringify(report, null, 2));
 const failed = report.cuts.flatMap((c) => c.checks.filter((x) => !x.ok && !x.soft).map((x) => `${c.name}: ${x.check}`));
@@ -126,6 +167,6 @@ writeFileSync(`${DIR}/report.md`, [
     c.chapterText ? 'Chapters:\n' + c.chapterText : '', ''].join('\n')),
   `Page errors: ${report.errors.length ? JSON.stringify(report.errors).slice(0, 1500) : 'none'}`,
 ].join('\n'));
-console.log(`\nReport: ${DIR}/report.md · description: ${DIR}/description.md`);
+console.log(`\nReport: ${DIR}/report.md · videos and posts: ${UP}/`);
 console.log(failed.length || report.errors.length ? `✗ ${failed.length} failed check(s), ${report.errors.length} page error(s)` : '✓ all videos made and checked');
 process.exitCode = failed.length || report.errors.length ? 1 : 0;

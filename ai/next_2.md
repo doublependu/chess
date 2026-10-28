@@ -51,16 +51,20 @@ Answers `prompt_2.md` and follows `plan_2.md`. Nothing is committed.
 | Critical path | **194.2 KB gzip** (190.8 in next_1; budget 250). The film code is a lazy 1.2 KB chunk that only `?test=1` loads |
 | TTI (`perf:load`) | 1.07 / 2.11 / 2.70 s (next_1: 1.10 / 2.05 / 2.70). The mid-mobile profile is over its 2.0 s warning line, as it was in next_1. A plain visit still talks to no other server |
 
-### The videos (not committed; in `playtest-output/`)
+### The videos (not committed; in `playtest-output/film-2026-10-27T22-45-50-800Z/upload/`)
+
+All three are in one folder, with the YouTube subtitles and thumbnails and `posts.md`: titles, descriptions, chapters,
+links and the X post, ready to paste. The end cards carry the game's address, ch0.maize.live (now `--url-label`'s
+default).
 
 | Cut | File | Size, length | Checks | Made in |
 |---|---|---|---|---|
-| YouTube | `film-2026-10-27T09-09-54-532Z/youtube/youtube.mp4` | 1920×1080 60 fps, **4:31**, 315 MB | all ✓: H.264 High + AAC 48 kHz, −16.1 LUFS, peak −0.8 dBFS, no black stretch | 27 min |
-| Short | `film-2026-10-27T08-33-03-124Z/short/short.mp4` | 1080×1920 60 fps, **55.3 s**, 43 MB | all ✓, −15.1 LUFS | 6 min |
-| X | `film-2026-10-27T08-33-03-124Z/x/x.mp4` | 1080×1080 60 fps, **56.9 s**, 31 MB | all ✓, −15.1 LUFS | 4 min |
+| YouTube | `youtube.mp4` | 1920×1080 60 fps, **4:28**, 309 MB | all ✓: H.264 High + AAC 48 kHz, −16.1 LUFS, peak −0.6 dBFS, no black stretch | 28 min |
+| Short | `short.mp4` | 1080×1920 60 fps, **54.4 s**, 42 MB | all ✓, −15.1 LUFS | 6 min |
+| X | `x.mp4` | 1080×1080 60 fps, **57.1 s**, 31 MB | all ✓, −15.1 LUFS | 4 min |
 
 - **Frozen stretches:** the only "frozen over 3 s" in each cut is the end card, which is meant to hold still.
-- **Next to the YouTube cut:** `youtube.srt`, `thumb-shatter.jpg` and `thumb-rewind.jpg` (1280×720), contact sheets, and `description.md` (title ideas, the description, links, and chapters from 0:00 to 4:24).
+- **Next to the YouTube cut:** `youtube.srt` and two 1280×720 thumbnails (in `upload/` as `youtube-thumb-shatter.jpg` and `youtube-thumb-rewind.jpg`); contact sheets stay in `youtube/`.
 - **What I checked by eye**, from contact sheets and single frames of every reel:
   - each capture shatters (not the gate-timeout fallback);
   - the cursor and finger match the moves;
@@ -85,7 +89,7 @@ Answers `prompt_2.md` and follows `plan_2.md`. Nothing is committed.
 
 ## Deviations from plan_2
 
-- **YouTube is 4:31, not ~5:00.** The full Opera Game, a close-up reel and a settings reel were added to reach that.
+- **YouTube is 4:28, not ~5:00.** The full Opera Game, a close-up reel and a settings reel were added to reach that.
 - **X has no adaptive-AI reel**, to stay under a minute. The end card says it instead.
 - **No phone-rotation shot.** The devices reel is three portrait phones.
 - **The loading screen isn't filmed**, because it loads before the film's clock can start. The intro's caption gives the load time.
@@ -94,7 +98,7 @@ Answers `prompt_2.md` and follows `plan_2.md`. Nothing is committed.
 
 ## Next
 
-1. **Watch the three videos, and send notes.** Captions, order and pacing live in `playtest/film/reels.mjs` and `CUTS` in `playtest/film.mjs`. Also give the game's address for the end card (`--url-label`), and a licensed track if you want music (`--music`).
+1. **Watch the three videos, and send notes.** Captions, order and pacing live in `playtest/film/reels.mjs` and `CUTS` in `playtest/film.mjs`; the post text in `playtest/film.mjs`. A licensed track if you want music (`--music`). A Short's description links can't be clicked, so its end card shows the address instead of "Link in the description".
 2. **Real devices** (still open from next_0 and next_1): iPhone Safari and an entry Android, now including the p3p2 button's safe-area offset and the room note.
 3. **For p3p2, upstream:**
    - safe-area insets on the corner button (then drop our CSS rule);

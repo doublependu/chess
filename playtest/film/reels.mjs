@@ -346,16 +346,18 @@ export function outro(env) {
     await startFromTitle(f, /Play White/);
     await f.page.evaluate(() => window.__filmApp.orbit({ yaw: 0.6, pitch: -0.1, dist: 1.5 }, 1));
     const short = env.preset.name === 'short';
+    const url = env.args['url-label'] || '';
     f.rec.mark('Play it');
     await f.rec.card({
       title: 'Sky Arena Chess', ms: short ? 4400 : 6500, fadeOut: 0,
+      // A Short's description links can't be clicked, so its card carries the address itself when there is one.
       lines: short
-        ? ['Free in your browser', { text: 'Link in the description', dim: true }]
+        ? ['Free in your browser', { text: url ? 'No install, no sign-up' : 'Link in the description', dim: true }]
         : env.preset.name === 'x'
           ? ['Free in your browser', { text: 'An AI that adapts to how you play', dim: true, scale: 0.85 }, { text: 'Open source: github.com/doublependu/chess', dim: true, scale: 0.75 }]
           : ['Free in your browser: no install, no sign-up', { text: 'Fork me on GitHub · github.com/doublependu/chess', dim: true, scale: 0.8 },
             { text: 'More games on Maize.Live · Multiplayer by p3p2.me', dim: true, scale: 0.8 }],
-      url: env.args['url-label'] || '',
+      url,
     });
     await f.rec.hold(short ? 4400 : 6500);
   });

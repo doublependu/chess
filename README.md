@@ -68,13 +68,14 @@ ops in the room's log (`src/net/table.js`); p3p2 needs nothing new.
 `npm run film` records the production build as a person plays it (a cursor, or a finger on a phone) and cuts three
 videos into `playtest-output/film-*/`: `youtube/youtube.mp4` (1920×1080, about 4½ minutes, with chapters, subtitles
 and two thumbnails), `short/short.mp4` (1080×1920, under a minute) and `x/x.mp4` (1080×1080, under a minute, captioned
-to work muted), with `description.md` (titles, descriptions, chapters, links) and a report of checks on each.
+to work muted), and a report of checks on each. The finished videos are gathered in `upload/` with `posts.md`: titles,
+descriptions, chapters and links to post with each.
 
 - It renders frame by frame on a clock of its own (Playwright's fake clock, CSS animations set to the same time), so
   a video is smooth at 60 fps however slow the machine; the game's sounds are rendered afterwards from the same
   `Synth` code into the same timeline. The room reel is recorded in real time instead (its server keeps real time).
-- Options: `--cut youtube|short|x`, `--reels opera,rewind` (some reels only), `--url-label <the game's address>` for
-  the end card, `--music <file>` for music under the game's sounds, `--p3p2 <dir>` for the room reel's server.
+- Options: `--cut youtube|short|x`, `--reels opera,rewind` (some reels only), `--url-label <address>` for
+  the end card (ch0.maize.live), `--music <file>` for music under the game's sounds, `--p3p2 <dir>` for the room reel's server.
 - It uses the GPU from a headless browser (`--use-gl=angle --use-angle=gl-egl`); `--headed` shows the windows.
 
 Playtest output (videos, traces, reports, PGNs) goes to `playtest-output/`, which is git-ignored. The first browser run may need `npx playwright install chromium`.
